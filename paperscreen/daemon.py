@@ -89,62 +89,9 @@ def _lerp_apply(target, on_done=None):
 class Daemon:
     def __init__(self):
         self.stop = threading.Event()
-        self.apply_lock = threading.Lock()
         self.current_preset = None
         self.current_night = None
         self.tray_icon: tray.SystemTray | None = None
-
-    # ---------------- worker: journal + schedule ----------------
-
-    def worker(self) -> None:
-        last_apply = None
-        while not self.stop.is_set():
-            j = signals.load()
-            if not j.get("active"):
-                self.stop.set()
-                return
-            if j.get("pid") not in (None, os.getpid()):
-                # superseded: the newer daemon owns the effect now
-                self.stop.set()
-                _unregister_revert(self)
-                return
-            cfg = config.load()
-            preset = j.get("preset") or cfg["preset"]
-            night = config.is_night()
-
-            # Auto-pause for fullscreen apps or excluded processes
-            paused = False
-            if cfg.get("auto_pause_fullscreen", False) and winlib.is_foreground_fullscreen():
-                paused = True
-            elif cfg.get("excluded_apps"):
-                fg_proc = winlib.get_foreground_process_name()
-                if fg_proc and fg_proc in cfg["excluded_apps"]:
-                    paused = True
-
-            if paused:
-                if last_apply != "paused":
-                    with self.apply_lock:
-                        _lerp_apply(color_matrix.identity())
-                    last_apply = "paused"
-                    if self.tray_icon:
-                        self.tray_icon.update_tooltip("PaperScreen - Paused (App Exclusion)", active=False)
-                time.sleep(POLL_SECONDS)
-                continue
-
-            if (preset, night) != last_apply:
-                target = matrix_for(preset, night)
-                with self.apply_lock:
-                    _lerp_apply(target)
-                self.current_preset, self.current_night = preset, night
-                last_apply = (preset, night)
-                signals.update(
-                    active=True,
-                    preset=preset,
-                    applied_at=datetime.datetime.now().isoformat(timespec="seconds"),
-                )
-                if self.tray_icon:
-                    self.tray_icon.update_tooltip(f"PaperScreen - Active: {preset.title()}", active=True)
-            time.sleep(POLL_SECONDS)
 
     # ---------------- hotkey & menu handling ----------------
 
@@ -152,14 +99,12 @@ class Daemon:
         j = signals.load()
         if j.get("active"):
             # toggling OFF: revert matrix, flag journal off, exit
-            with self.apply_lock:
-                _lerp_apply(color_matrix.identity())
+            _lerp_apply(color_matrix.identity())
             signals.update(active=False, pid=None)
             self.stop.set()
         else:
             signals.update(active=True, preset="paper")
-            with self.apply_lock:
-                _lerp_apply(matrix_for("paper", config.is_night()))
+            _lerp_apply(matrix_for("paper", config.is_night()))
 
     def handle_menu_command(self, cmd_id: int) -> None:
         """Handle context menu selections from the system tray."""
@@ -168,9 +113,8 @@ class Daemon:
 
         elif cmd_id == tray.CMD_HEADER:
             # Refresh current matrix (called after sleep/resume or display change)
-            with self.apply_lock:
-                p = self.current_preset or "paper"
-                _lerp_apply(matrix_for(p, config.is_night()))
+            p = self.current_preset or "paper"
+            _lerp_apply(matrix_for(p, config.is_night()))
 
         elif cmd_id in (
             tray.CMD_PRESET_PAPER,
@@ -180,6 +124,7 @@ class Daemon:
             tray.CMD_PRESET_EINK_WARM,
             tray.CMD_PRESET_NIGHTPAPER,
             tray.CMD_PRESET_INVERTED,
+            tray.CMD_PRESET_CUSTOM,
             tray.CMD_PRESET_AUTO,
         ):
             mapping = {
@@ -190,12 +135,12 @@ class Daemon:
                 tray.CMD_PRESET_EINK_WARM: "eink_warm",
                 tray.CMD_PRESET_NIGHTPAPER: "nightpaper",
                 tray.CMD_PRESET_INVERTED: "inverted_paper",
+                tray.CMD_PRESET_CUSTOM: "custom",
                 tray.CMD_PRESET_AUTO: "auto",
             }
             new_preset = mapping[cmd_id]
             signals.update(active=True, preset=new_preset)
-            with self.apply_lock:
-                _lerp_apply(matrix_for(new_preset, config.is_night()))
+            _lerp_apply(matrix_for(new_preset, config.is_night()))
             self.current_preset = new_preset
             if self.tray_icon:
                 self.tray_icon.update_tooltip(f"PaperScreen - Active: {new_preset.title()}", active=True)
@@ -261,8 +206,7 @@ class Daemon:
                 self.tray_icon.show_balloon("PaperScreen Diagnostics", msg)
 
         elif cmd_id == tray.CMD_EXIT:
-            with self.apply_lock:
-                _lerp_apply(color_matrix.identity())
+            _lerp_apply(color_matrix.identity())
             backlight.restore()
             cleartype.restore_previous()
             signals.update(active=False, pid=None)
@@ -271,22 +215,29 @@ class Daemon:
     # ---------------- lifecycle ----------------
 
     def run(self) -> int:
+        logger.info(f"Daemon.run() invoked on PID {os.getpid()}")
         # OS-level single instance check
         k32 = ctypes.windll.kernel32
         DAEMON_MUTEX_NAME = "Local\\PaperScreenDaemonSingleInstanceMutex"
         h_mutex = k32.CreateMutexW(None, True, DAEMON_MUTEX_NAME)
+        err = k32.GetLastError()
+        logger.info(f"CreateMutexW result: handle={h_mutex}, error={err}")
         ERROR_ALREADY_EXISTS = 183
-        if k32.GetLastError() == ERROR_ALREADY_EXISTS:
+        if err == ERROR_ALREADY_EXISTS:
             logger.info("Another PaperScreen daemon instance is already running; exiting redundant instance.")
             if h_mutex:
                 k32.CloseHandle(h_mutex)
             return 0
+
+        # Initialize Magnification API strictly on this main thread
+        winlib.mag_initialize()
 
         j = signals.load()
         preset = j.get("preset") or config.load()["preset"]
         night = config.is_night()
         try:
             winlib.mag_set_color_effect(matrix_for(preset, night))
+            logger.info(f"Initial matrix applied for preset: {preset}")
         except Exception as exc:
             logger.error(f"Failed initial matrix apply: {exc}")
         self.current_preset, self.current_night = preset, night
@@ -295,10 +246,11 @@ class Daemon:
 
         # Initialize System Tray
         self.tray_icon = tray.SystemTray(on_command=self.handle_menu_command)
-        self.tray_icon.create()
-
-        t = threading.Thread(target=self.worker, daemon=True)
-        t.start()
+        tray_ok = self.tray_icon.create()
+        if not tray_ok:
+            logger.warn("System tray creation failed; continuing in headless mode")
+        else:
+            self.tray_icon.update_tooltip(f"PaperScreen - Active: {preset.title()}", active=True)
 
         # RegisterHotKey (optional; ignore failure)
         hotkey_ok = False
@@ -311,26 +263,84 @@ class Daemon:
 
         msg = wintypes.MSG()
         pmsg = ctypes.byref(msg)
+        last_check = 0.0
+        last_apply = (preset, night)
+
         try:
             while not self.stop.is_set():
-                # PeekMessage with PM_REMOVE(1) handles tray messages, hotkeys, and menu commands
                 while winlib.user32().PeekMessageW(pmsg, 0, 0, 0, 1):
+                    if msg.message == 0x0012: # WM_QUIT
+                        logger.info("Daemon received WM_QUIT; exiting loop")
+                        self.stop.set()
+                        break
                     if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
                         self.on_hotkey()
                     winlib.user32().TranslateMessage(pmsg)
                     winlib.user32().DispatchMessageW(pmsg)
+
+                if self.stop.is_set():
+                    break
+
+                now = time.time()
+                if now - last_check >= POLL_SECONDS:
+                    last_check = now
+                    j = signals.load()
+                    if j.get("active") is False:
+                        logger.info("Deactivation signal received; shutting down daemon.")
+                        self.stop.set()
+                        break
+
+                    cfg = config.load()
+                    preset = j.get("preset") or cfg["preset"]
+                    night = config.is_night()
+
+                    # Auto-pause for fullscreen apps or excluded processes
+                    paused = False
+                    if cfg.get("auto_pause_fullscreen", False) and winlib.is_foreground_fullscreen():
+                        paused = True
+                    elif cfg.get("excluded_apps"):
+                        fg_proc = winlib.get_foreground_process_name()
+                        if fg_proc and fg_proc in cfg["excluded_apps"]:
+                            paused = True
+
+                    if paused:
+                        if last_apply != "paused":
+                            _lerp_apply(color_matrix.identity())
+                            last_apply = "paused"
+                            if self.tray_icon:
+                                self.tray_icon.update_tooltip("PaperScreen - Paused (App Exclusion)", active=False)
+                        time.sleep(0.04)
+                        continue
+                    elif last_apply == "paused":
+                        last_apply = None
+
+                    if (preset, night) != last_apply:
+                        target = matrix_for(preset, night)
+                        _lerp_apply(target)
+                        self.current_preset, self.current_night = preset, night
+                        last_apply = (preset, night)
+                        signals.update(
+                            active=True,
+                            preset=preset,
+                            applied_at=datetime.datetime.now().isoformat(timespec="seconds"),
+                        )
+                        if self.tray_icon:
+                            self.tray_icon.update_tooltip(f"PaperScreen - Active: {preset.title()}", active=True)
+
                 time.sleep(0.04)
         finally:
+            logger.info(f"Daemon process {os.getpid()} entering finally cleanup block")
             if hotkey_ok:
                 winlib.user32().UnregisterHotKey(None, HOTKEY_ID)
             if self.tray_icon:
                 self.tray_icon.remove()
             self.stop.set()
-            t.join(timeout=2)
+            _revert()
             signals.update(active=False, pid=None)
             if h_mutex:
                 k32.ReleaseMutex(h_mutex)
                 k32.CloseHandle(h_mutex)
+            logger.info(f"Daemon process {os.getpid()} finished finally cleanup")
         return 0
 
 
@@ -357,6 +367,10 @@ def daemon_main() -> int:
         d.stop.set()
         _revert()
         return 0
+    except Exception as exc:
+        logger.error(f"Daemon crashed with unhandled exception: {exc}", exc)
+        _revert()
+        return 1
 
 
 if __name__ == "__main__":

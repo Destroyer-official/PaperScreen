@@ -38,10 +38,11 @@ def apply(preset: str = None, set_backlight: bool = True) -> dict:
     report: dict = {"preset": preset, "matrix": None, "backlight": None, "smoothing": None}
 
     old_pid = journal.get("pid")
-    if old_pid and spawn.is_alive(int(old_pid)):
+    if spawn.is_daemon_running():
         # daemon alive: it polls the journal and will pick up the new preset
-        report["matrix"] = f"daemon pid {old_pid} updated"
+        report["matrix"] = f"daemon pid {old_pid} updated" if old_pid else "daemon updated"
     else:
+        signals.update(pid=None)
         import sys
         target_args = ["daemon"] if getattr(sys, "frozen", False) else ["paperscreen.daemon"]
         pid = spawn.start_detached(target_args)
@@ -49,8 +50,7 @@ def apply(preset: str = None, set_backlight: bool = True) -> dict:
             report["matrix"] = f"daemon pid {pid} started"
             deadline = time.time() + MAX_DAEMON_WAIT
             while time.time() < deadline:
-                j = signals.load()
-                if j.get("pid") == pid:
+                if spawn.is_daemon_running():
                     break
                 time.sleep(0.1)
         else:
@@ -76,14 +76,12 @@ def release(reason: str = "manual") -> dict:
     Backlight + smoothing restored here (they're process-independent)."""
     report: dict = {"reason": reason, "matrix": None, "backlight": None, "smoothing": None}
 
-    journal = signals.load()
-    pid = journal.get("pid")
     signals.update(active=False)
 
     # wait briefly for daemon to revert matrix (it does it on exit)
-    if pid and spawn.is_alive(int(pid)):
+    if spawn.is_daemon_running():
         deadline = time.time() + MAX_DAEMON_WAIT
-        while time.time() < deadline and spawn.is_alive(int(pid)):
+        while time.time() < deadline and spawn.is_daemon_running():
             time.sleep(0.1)
         report["matrix"] = "daemon reverted and exited"
     else:
@@ -109,19 +107,23 @@ def release(reason: str = "manual") -> dict:
 
 def status() -> dict:
     journal = signals.load()
-    try:
-        current = winlib.mag_get_color_effect()
-    except winlib.PaperAPIError:
-        current = None
+    daemon_running = spawn.is_daemon_running()
     identity = color_matrix.identity()
-    is_identity = current is not None and all(
-        abs(current[r][c] - identity[r][c]) < 1e-6 for r in range(5) for c in range(5)
-    )
+    if daemon_running:
+        is_identity = False
+    else:
+        try:
+            current = winlib.mag_get_color_effect()
+        except winlib.PaperAPIError:
+            current = None
+        is_identity = current is not None and all(
+            abs(current[r][c] - identity[r][c]) < 1e-6 for r in range(5) for c in range(5)
+        )
     pid = journal.get("pid")
     return {
-        "engine_active": bool(journal.get("active")),
-        "daemon_pid": pid,
-        "daemon_alive": spawn.is_alive(int(pid)) if pid else False,
+        "engine_active": bool(journal.get("active")) and daemon_running,
+        "daemon_pid": pid if daemon_running else None,
+        "daemon_alive": daemon_running,
         "matrix_is_identity": is_identity,
         "preset": journal.get("preset"),
         "applied_at": journal.get("applied_at"),

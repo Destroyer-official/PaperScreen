@@ -69,6 +69,7 @@ CMD_PRESET_EINK_WARM = 1014
 CMD_PRESET_NIGHTPAPER = 1015
 CMD_PRESET_INVERTED = 1016
 CMD_PRESET_AUTO = 1017
+CMD_PRESET_CUSTOM = 1018
 
 CMD_BRI_100 = 1030
 CMD_BRI_75 = 1031
@@ -248,6 +249,18 @@ class SystemTray:
         self.h_icon_active = _create_paper_icon(active=True)
         self.h_icon_inactive = _create_paper_icon(active=False)
 
+        # User32 function signatures to avoid 64-bit integer overflow
+        u32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        u32.DefWindowProcW.restype = LRESULT
+        u32.PostQuitMessage.argtypes = [ctypes.c_int]
+        u32.PostQuitMessage.restype = None
+        u32.DestroyWindow.argtypes = [wintypes.HWND]
+        u32.DestroyWindow.restype = wintypes.BOOL
+        u32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        u32.SetForegroundWindow.restype = wintypes.BOOL
+        u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        u32.PostMessageW.restype = wintypes.BOOL
+
         # Register TaskbarCreated message
         self.taskbar_created_msg = u32.RegisterWindowMessageW("TaskbarCreated")
 
@@ -300,11 +313,10 @@ class SystemTray:
         wc.lpszClassName = class_name
         u32.RegisterClassExW(ctypes.byref(wc))
 
-        # Message-only window
-        HWND_MESSAGE = wintypes.HWND(-3)
+        # Hidden top-level window to properly receive shell and broadcast messages
         self.hwnd = u32.CreateWindowExW(
             0, class_name, "PaperScreen Tray", 0, 0, 0, 0, 0,
-            HWND_MESSAGE, None, h_inst, None
+            None, None, h_inst, None
         )
 
         if not self.hwnd:
@@ -376,13 +388,14 @@ class SystemTray:
         def _p_flags(name: str):
             return MF_STRING | (MF_CHECKED if (is_active and cur_preset == name) else MF_UNCHECKED)
 
-        u32.AppendMenuW(h_presets, _p_flags("paper"), CMD_PRESET_PAPER, "Paper (4600 K)")
-        u32.AppendMenuW(h_presets, _p_flags("sepia"), CMD_PRESET_SEPIA, "Sepia (3800 K)")
-        u32.AppendMenuW(h_presets, _p_flags("warm_reading"), CMD_PRESET_WARM_READING, "Warm Reading (3200 K)")
-        u32.AppendMenuW(h_presets, _p_flags("eink"), CMD_PRESET_EINK, "E-Ink (6500 K Mono)")
-        u32.AppendMenuW(h_presets, _p_flags("eink_warm"), CMD_PRESET_EINK_WARM, "E-Ink Warm (4200 K)")
-        u32.AppendMenuW(h_presets, _p_flags("nightpaper"), CMD_PRESET_NIGHTPAPER, "Night Paper (3400 K)")
+        u32.AppendMenuW(h_presets, _p_flags("paper"), CMD_PRESET_PAPER, "Paper (4400 K Matte)")
+        u32.AppendMenuW(h_presets, _p_flags("sepia"), CMD_PRESET_SEPIA, "Sepia (3600 K Antique)")
+        u32.AppendMenuW(h_presets, _p_flags("warm_reading"), CMD_PRESET_WARM_READING, "Warm Reading (3000 K)")
+        u32.AppendMenuW(h_presets, _p_flags("eink"), CMD_PRESET_EINK, "E-Ink Monochrome (6500 K)")
+        u32.AppendMenuW(h_presets, _p_flags("eink_warm"), CMD_PRESET_EINK_WARM, "E-Ink Warm Paperwhite (4000 K)")
+        u32.AppendMenuW(h_presets, _p_flags("nightpaper"), CMD_PRESET_NIGHTPAPER, "Night Paper (3200 K)")
         u32.AppendMenuW(h_presets, _p_flags("inverted_paper"), CMD_PRESET_INVERTED, "Inverted Paper (Dark)")
+        u32.AppendMenuW(h_presets, _p_flags("custom"), CMD_PRESET_CUSTOM, "Custom (Calibrated)")
         u32.AppendMenuW(h_presets, MF_SEPARATOR, 0, None)
         u32.AppendMenuW(h_presets, _p_flags("auto"), CMD_PRESET_AUTO, "Auto Day/Night Sync")
         u32.AppendMenuW(h_menu, MF_POPUP, h_presets, "Presets")

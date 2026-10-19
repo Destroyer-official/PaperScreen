@@ -14,6 +14,18 @@ DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
 
 kernel32 = ctypes.windll.kernel32
+kernel32.CreateProcessW.argtypes = [
+    wintypes.LPCWSTR,
+    wintypes.LPWSTR,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+    wintypes.BOOL,
+    wintypes.DWORD,
+    ctypes.c_void_p,
+    wintypes.LPCWSTR,
+    ctypes.c_void_p,
+    ctypes.c_void_p,
+]
 kernel32.CreateProcessW.restype = wintypes.BOOL
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 kernel32.CloseHandle.restype = wintypes.BOOL
@@ -58,29 +70,60 @@ def _quote(s: str) -> str:
 
 
 def start_detached(module_args: list) -> int:
-    """Start `pythonw -m <module...> <args>` or `PaperScreen.exe <args>` detached. Returns pid, 0 on fail."""
+    """Start daemon detached with correct working directory and module path. Returns pid, 0 on fail."""
     import os
+    import subprocess
+    pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    env = dict(os.environ)
+    env["PYTHONPATH"] = pkg_root + (os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
+
     if getattr(sys, "frozen", False):
         cmdline = [sys.executable, *module_args]
+        cwd = os.path.dirname(sys.executable)
     else:
         pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
         exe = pythonw if os.path.isfile(pythonw) else sys.executable
         cmdline = [exe, "-m", *module_args]
-    args = " ".join(_quote(a) for a in cmdline)
-    si = _STARTUPINFO()
-    si.cb = ctypes.sizeof(_STARTUPINFO)
-    pi = _PROCESS_INFORMATION()
-    ok = kernel32.CreateProcessW(
-        None, args, None, None, False,
-        DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
-        None, None, ctypes.byref(si), ctypes.byref(pi)
-    )
-    if not ok:
+        cwd = pkg_root
+
+    DETACHED_PROCESS = 0x00000008
+    CREATE_NEW_PROCESS_GROUP = 0x00000200
+    CREATE_NO_WINDOW = 0x08000000
+
+    si = subprocess.STARTUPINFO()
+    si.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+    si.wShowWindow = 0  # SW_HIDE
+
+    try:
+        p = subprocess.Popen(
+            cmdline,
+            cwd=cwd,
+            env=env,
+            creationflags=CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP,
+            startupinfo=si,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            close_fds=True,
+        )
+        return p.pid
+    except Exception:
         return 0
-    pid = pi.dwProcessId
-    kernel32.CloseHandle(pi.hProcess)
-    kernel32.CloseHandle(pi.hThread)
-    return pid
+
+
+DAEMON_MUTEX_NAME = "Local\\PaperScreenDaemonSingleInstanceMutex"
+
+
+def is_daemon_running() -> bool:
+    """Check if the PaperScreen daemon is actually running via the OS Named Mutex."""
+    SYNCHRONIZE = 0x00100000
+    kernel32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+    kernel32.OpenMutexW.restype = wintypes.HANDLE
+    h = kernel32.OpenMutexW(SYNCHRONIZE, False, DAEMON_MUTEX_NAME)
+    if h:
+        kernel32.CloseHandle(h)
+        return True
+    return False
 
 
 def is_alive(pid: int) -> bool:
@@ -94,7 +137,18 @@ def is_alive(pid: int) -> bool:
     try:
         code = wintypes.DWORD()
         if kernel32.GetExitCodeProcess(h, ctypes.byref(code)):
-            return code.value == STILL_ACTIVE
+            if code.value != STILL_ACTIVE:
+                return False
+            # Validate process executable to ensure unrelated PIDs are not misidentified
+            buf = (wintypes.WCHAR * 1024)()
+            size = wintypes.DWORD(1024)
+            if hasattr(kernel32, "QueryFullProcessImageNameW"):
+                if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                    exe_name = buf.value.lower()
+                    if not any(k in exe_name for k in ("python", "paperscreen")):
+                        return False
+            return True
         return False
     finally:
         kernel32.CloseHandle(h)
+

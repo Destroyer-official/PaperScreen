@@ -14,12 +14,12 @@ APP_DIR_NAME = "PaperScreen"
 CONFIG_NAME = "config.json"
 
 DEFAULTS = {
-    "preset": "paper",            # paper | sepia | eink | off
-    "kelvin": 4600,
-    "desaturation": 0.35,
+    "preset": "paper",            # paper | sepia | eink | eink_warm | warm_reading | nightpaper | inverted_paper | custom | auto | off
+    "kelvin": 4400,
+    "desaturation": 0.65,
     "black_floor": 0.10,
-    "white_ceiling": 0.92,
-    "contrast": 1.0,
+    "white_ceiling": 0.90,
+    "contrast": 1.04,
     "backlight_day": 60,          # DDC brightness when ambient unknown
     "backlight_night": 30,
     "night_start_hour": 19,       # 24h local time; night preset applied after
@@ -52,7 +52,7 @@ def _validate(cfg: dict) -> dict:
         if k not in DEFAULTS:
             continue  # unknown keys dropped silently (forward compat)
         out[k] = v
-    VALID_PRESETS = ("paper", "sepia", "eink", "warm_reading", "eink_warm", "nightpaper", "inverted_paper", "auto", "off")
+    VALID_PRESETS = ("paper", "sepia", "eink", "warm_reading", "eink_warm", "nightpaper", "inverted_paper", "custom", "auto", "off")
     out["preset"] = str(out["preset"]) if out["preset"] in VALID_PRESETS else "paper"
     out["kelvin"] = min(15000, max(1000, int(out["kelvin"])))
     out["desaturation"] = min(1.0, max(0.0, float(out["desaturation"])))

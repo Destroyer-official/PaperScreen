@@ -22,6 +22,7 @@ ALL_PRESETS = [
     "eink_warm",
     "nightpaper",
     "inverted_paper",
+    "custom",
     "auto",
 ]
 

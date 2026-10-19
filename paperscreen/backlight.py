@@ -146,9 +146,7 @@ def set_brightness(level: int, remember: bool = True) -> dict:
                 report["failed"].append({"name": wmi_key, "reason": "WMI set brightness failed"})
 
     if remember and report["set"]:
-        journal["backlight_previous"] = previous_by_key
-        journal["backlight_level"] = level
-        signals.save(journal)
+        signals.update(backlight_previous=previous_by_key, backlight_level=level)
 
     return report
 

@@ -60,7 +60,12 @@ class SettingsWindow:
         self.var_auto_pause = tk.BooleanVar(value=self.cfg.get("auto_pause_fullscreen", False))
         self.var_excluded = tk.StringVar(value=", ".join(self.cfg.get("excluded_apps", [])))
 
+        self.var_live_preview = tk.BooleanVar(value=True)
+        self._user_adjusting = True
+        self._slider_labels = {}
+
     def _build_ui(self):
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         style = ttk.Style()
         style.theme_use("clam")
         style.configure("TNotebook", background=self.bg_color)
@@ -110,9 +115,10 @@ class SettingsWindow:
         row_preset.pack(fill="x", pady=(0, 10))
         tk.Label(row_preset, text="Active Preset:", font=("Segoe UI", 9, "bold"), bg=self.card_color, fg=self.text_color).pack(side="left")
 
-        presets = ["paper", "sepia", "warm_reading", "eink", "eink_warm", "nightpaper", "inverted_paper", "auto"]
-        cb_preset = ttk.Combobox(row_preset, textvariable=self.var_preset, values=presets, state="readonly", width=18)
-        cb_preset.pack(side="right")
+        presets = ["paper", "sepia", "warm_reading", "eink", "eink_warm", "nightpaper", "inverted_paper", "custom", "auto"]
+        self.cb_preset = ttk.Combobox(row_preset, textvariable=self.var_preset, values=presets, state="readonly", width=18)
+        self.cb_preset.pack(side="right")
+        self.cb_preset.bind("<<ComboboxSelected>>", self._on_preset_selected)
 
         # Sliders
         self._add_slider(parent, "Color Temperature (Kelvin):", self.var_kelvin, 1000, 10000, 100, " K")
@@ -120,6 +126,77 @@ class SettingsWindow:
         self._add_slider(parent, "Black Floor (Charcoal Lift %):", self.var_floor, 0, 40, 1, "%")
         self._add_slider(parent, "White Ceiling (Parchment Cap %):", self.var_ceiling, 50, 100, 1, "%")
         self._add_slider(parent, "Contrast Scale:", self.var_contrast, 0.4, 1.8, 0.05, "x")
+
+        # Real-time preview checkbutton
+        preview_frame = tk.Frame(parent, bg=self.card_color)
+        preview_frame.pack(fill="x", pady=(10, 0))
+        tk.Checkbutton(
+            preview_frame, text="Real-Time Display Preview (changes reflect immediately on monitor)",
+            variable=self.var_live_preview, bg=self.card_color, activebackground=self.card_color,
+            font=("Segoe UI", 9, "italic"), fg=self.accent_color,
+            command=self._apply_live_preview
+        ).pack(side="left")
+
+    def _on_preset_selected(self, event=None):
+        name = self.var_preset.get()
+        if name in color_matrix.PRESET_VALUES:
+            self._user_adjusting = False
+            vals = color_matrix.PRESET_VALUES[name]
+            self.var_kelvin.set(vals.get("kelvin", 4400))
+            self.var_desat.set(round(vals.get("desaturation", 0.65) * 100, 1))
+            self.var_floor.set(round(vals.get("black_floor", 0.10) * 100, 1))
+            self.var_ceiling.set(round(vals.get("white_ceiling", 0.90) * 100, 1))
+            self.var_contrast.set(round(vals.get("contrast", 1.04), 2))
+            self._update_all_slider_labels()
+            self._user_adjusting = True
+        self._apply_live_preview()
+
+    def _update_all_slider_labels(self):
+        for var, (lbl, res, unit) in self._slider_labels.items():
+            val = var.get()
+            formatted = f"{float(val):.2f}" if isinstance(res, float) else f"{int(float(val))}"
+            lbl.config(text=f"{formatted}{unit}")
+
+    def _apply_live_preview(self):
+        if not getattr(self, "var_live_preview", None) or not self.var_live_preview.get():
+            return
+        p = self.var_preset.get()
+        try:
+            from . import winlib
+            winlib.mag_initialize()
+            if p == "eink":
+                m = color_matrix.preset("eink")
+            elif p == "eink_warm":
+                m = color_matrix.preset("eink_warm")
+            elif p == "inverted_paper":
+                m = color_matrix.inverted_paper_matrix(
+                    kelvin=float(self.var_kelvin.get()),
+                    desaturation=float(self.var_desat.get()) / 100.0,
+                    black_floor=float(self.var_floor.get()) / 100.0,
+                    white_ceiling=float(self.var_ceiling.get()) / 100.0,
+                )
+            else:
+                m = color_matrix.paper_matrix(
+                    kelvin=float(self.var_kelvin.get()),
+                    desaturation=float(self.var_desat.get()) / 100.0,
+                    black_floor=float(self.var_floor.get()) / 100.0,
+                    white_ceiling=float(self.var_ceiling.get()) / 100.0,
+                    contrast=float(self.var_contrast.get()),
+                )
+            winlib.mag_set_color_effect(m)
+        except Exception:
+            pass
+
+    def _on_close(self):
+        j = signals.load()
+        if not j.get("active"):
+            try:
+                from . import winlib
+                winlib.mag_initialize()
+                winlib.mag_set_color_effect(color_matrix.identity())
+            except Exception:
+                pass
+        self.root.destroy()
 
     def _add_slider(self, parent, label_text, var, from_val, to_val, resolution, unit=""):
         frame = tk.Frame(parent, bg=self.card_color)
@@ -131,10 +208,14 @@ class SettingsWindow:
         
         lbl_val = tk.Label(header, text=f"{var.get()}{unit}", font=("Segoe UI", 9, "bold"), bg=self.card_color, fg=self.accent_color)
         lbl_val.pack(side="right")
+        self._slider_labels[var] = (lbl_val, resolution, unit)
 
         def _on_move(val):
             formatted = f"{float(val):.2f}" if isinstance(resolution, float) else f"{int(float(val))}"
             lbl_val.config(text=f"{formatted}{unit}")
+            if self._user_adjusting and self.var_preset.get() not in ("custom", ""):
+                self.var_preset.set("custom")
+            self._apply_live_preview()
 
         scale = tk.Scale(
             frame, from_=from_val, to=to_val, resolution=resolution, variable=var,

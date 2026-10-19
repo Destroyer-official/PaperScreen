@@ -501,6 +501,14 @@ def is_foreground_fullscreen() -> bool:
         return False
     try:
         u32 = user32()
+        u32.GetForegroundWindow.restype = wintypes.HWND
+        u32.GetDesktopWindow.restype = wintypes.HWND
+        u32.GetShellWindow.restype = wintypes.HWND
+        u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+        u32.GetWindowRect.restype = wintypes.BOOL
+        u32.GetSystemMetrics.argtypes = [ctypes.c_int]
+        u32.GetSystemMetrics.restype = ctypes.c_int
+
         hwnd = u32.GetForegroundWindow()
         if not hwnd:
             return False
@@ -530,6 +538,14 @@ def get_foreground_process_name() -> str:
         import os
         u32 = user32()
         k32 = ctypes.windll.kernel32
+        u32.GetForegroundWindow.restype = wintypes.HWND
+        u32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        u32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        k32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k32.OpenProcess.restype = wintypes.HANDLE
+        k32.CloseHandle.argtypes = [wintypes.HANDLE]
+        k32.CloseHandle.restype = wintypes.BOOL
+
         hwnd = u32.GetForegroundWindow()
         if not hwnd:
             return ""
@@ -542,8 +558,8 @@ def get_foreground_process_name() -> str:
         if not h_proc:
             return ""
         try:
-            buf = (ctypes.c_wchar * 260)()
-            sz = wintypes.DWORD(260)
+            buf = (ctypes.c_wchar * 1024)()
+            sz = wintypes.DWORD(1024)
             k32.QueryFullProcessImageNameW.argtypes = [
                 wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)
             ]

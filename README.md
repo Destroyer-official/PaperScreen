@@ -29,16 +29,17 @@ Standard computer monitors are emissive light sources blasting up to 400 cd/m² 
 
 ## 🎨 Color Presets
 
-| Preset | Target CCT | Desaturation | Black Floor | White Ceiling | Preview (Hex) | Best For |
-|---|---|---|---|---|---|---|
-| `paper` *(default)* | 4600 K | 35% | 0.10 | 0.92 | `#1E1C1A` → `#F3EBDD` | Daylight coding, web reading, office work |
-| `sepia` | 3800 K | 55% | 0.13 | 0.88 | `#211E1A` → `#EDE0C8` | Evening reading, antique book aesthetic |
-| `warm_reading` | 3200 K | 40% | 0.12 | 0.86 | `#1C1610` → `#DEC298` | Long PDF & textbook reading in dim light |
-| `eink` | 6500 K | 100% | 0.08 | 0.94 | `#141414` → `#F0F0F0` | High-contrast neutral monochrome |
-| `eink_warm` | 4200 K | 100% | 0.08 | 0.92 | `#1B1612` → `#E8D8C0` | Kindle Paperwhite warm light emulation |
-| `nightpaper` | 3400 K | 45% | 0.07 | 0.72 | `#120E0A` → `#B89E78` | Late night work (PWM-safe matrix dimming) |
-| `inverted_paper` | 4600 K | 35% | 0.10 | 0.90 | `#E8DFC8` on `#1C1A18` | Dark-mode paper (charcoal background) |
-| `auto` | Dynamic | Dynamic | Dynamic | Dynamic | Day ↔ Night | Automated circadian day/night transition |
+| Preset | Target CCT | Desaturation | Black Floor | White Ceiling | Best For |
+|---|---|---|---|---|---|
+| `paper` *(default)* | 4400 K | 65% | 0.10 | 0.90 | Daylight coding, web reading, authentic matte print look |
+| `sepia` | 3600 K | 70% | 0.12 | 0.86 | Antique book aesthetic & evening reading |
+| `warm_reading` | 3000 K | 55% | 0.12 | 0.84 | Long PDF & textbook study under dim amber lighting |
+| `eink` | 6500 K | 100% | 0.08 | 0.92 | High-contrast ReMarkable/Boox neutral monochrome |
+| `eink_warm` | 4000 K | 100% | 0.08 | 0.90 | Kindle Paperwhite warm amber light emulation |
+| `nightpaper` | 3200 K | 60% | 0.07 | 0.72 | Late night deep work (PWM-safe matrix dimming) |
+| `inverted_paper` | 4400 K | 65% | 0.10 | 0.90 | Dark-mode paper (parchment text on soft charcoal) |
+| `custom` | Dynamic | Dynamic | Dynamic | Dynamic | Real-time live slider calibration via GUI (`--gui`) |
+| `auto` | Dynamic | Dynamic | Dynamic | Dynamic | Automated circadian day ↔ night sync |
 
 ---
 

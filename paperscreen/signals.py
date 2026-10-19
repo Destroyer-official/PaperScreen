@@ -20,12 +20,16 @@ def state_path() -> str:
 
 
 def load() -> dict:
-    try:
-        with open(state_path(), "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
+    import time
+    for attempt in range(3):
+        try:
+            with open(state_path(), "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data if isinstance(data, dict) else {}
+        except (OSError, ValueError):
+            if attempt < 2:
+                time.sleep(0.05)
+    return {}
 
 
 def update(**fields) -> dict:

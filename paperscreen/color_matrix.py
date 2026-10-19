@@ -186,6 +186,16 @@ def inverted_paper_matrix(
     return tuple(tuple(row) for row in m)
 
 
+PRESET_VALUES: Dict[str, dict] = {
+    "paper": {"kelvin": 4400, "desaturation": 0.65, "black_floor": 0.10, "white_ceiling": 0.90, "contrast": 1.04},
+    "sepia": {"kelvin": 3600, "desaturation": 0.70, "black_floor": 0.12, "white_ceiling": 0.86, "contrast": 1.05},
+    "warm_reading": {"kelvin": 3000, "desaturation": 0.55, "black_floor": 0.12, "white_ceiling": 0.84, "contrast": 1.06},
+    "eink": {"kelvin": 6500, "desaturation": 1.00, "black_floor": 0.08, "white_ceiling": 0.92, "contrast": 1.04},
+    "eink_warm": {"kelvin": 4000, "desaturation": 1.00, "black_floor": 0.08, "white_ceiling": 0.90, "contrast": 1.04},
+    "nightpaper": {"kelvin": 3200, "desaturation": 0.60, "black_floor": 0.07, "white_ceiling": 0.72, "contrast": 1.05, "luminance": 0.85},
+    "inverted_paper": {"kelvin": 4400, "desaturation": 0.65, "black_floor": 0.10, "white_ceiling": 0.90},
+}
+
 PRESETS = (
     "paper",
     "sepia",
@@ -194,6 +204,7 @@ PRESETS = (
     "eink_warm",
     "nightpaper",
     "inverted_paper",
+    "custom",
     "off",
 )
 
@@ -204,19 +215,28 @@ def preset(name: str):
     if name in ("off", "identity", "none"):
         return identity()
     if name == "paper":
-        return paper_matrix(kelvin=4600, desaturation=0.35, black_floor=0.10, white_ceiling=0.92)
+        return paper_matrix(**PRESET_VALUES["paper"])
     if name == "sepia":
-        return paper_matrix(kelvin=3800, desaturation=0.55, black_floor=0.13, white_ceiling=0.88)
+        return paper_matrix(**PRESET_VALUES["sepia"])
     if name == "eink":
-        return paper_matrix(kelvin=6500, desaturation=1.0, black_floor=0.08, white_ceiling=0.94)
+        return paper_matrix(**PRESET_VALUES["eink"])
     if name == "warm_reading":
-        return paper_matrix(kelvin=3200, desaturation=0.40, black_floor=0.12, white_ceiling=0.86, contrast=1.05)
+        return paper_matrix(**PRESET_VALUES["warm_reading"])
     if name == "eink_warm":
-        return paper_matrix(kelvin=4200, desaturation=1.0, black_floor=0.08, white_ceiling=0.92)
+        return paper_matrix(**PRESET_VALUES["eink_warm"])
     if name == "nightpaper":
-        # evening: warmer (melanopsin-friendly), dimmer via matrix (PWM-safe)
-        return paper_matrix(kelvin=3400, desaturation=0.45, black_floor=0.07, white_ceiling=0.72, luminance=0.85)
+        return paper_matrix(**PRESET_VALUES["nightpaper"])
     if name == "inverted_paper":
-        return inverted_paper_matrix(kelvin=4600, desaturation=0.35, black_floor=0.10, white_ceiling=0.90)
+        return inverted_paper_matrix(**PRESET_VALUES["inverted_paper"])
+    if name == "custom":
+        from . import config
+        cfg = config.load()
+        return paper_matrix(
+            kelvin=cfg.get("kelvin", 4400),
+            desaturation=cfg.get("desaturation", 0.65),
+            black_floor=cfg.get("black_floor", 0.10),
+            white_ceiling=cfg.get("white_ceiling", 0.90),
+            contrast=cfg.get("contrast", 1.04),
+        )
     raise ValueError(f"unknown preset: {name!r}")
 
