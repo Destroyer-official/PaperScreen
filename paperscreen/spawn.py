@@ -152,3 +152,10 @@ def is_alive(pid: int) -> bool:
     finally:
         kernel32.CloseHandle(h)
 
+
+__all__ = [
+    "start_detached",
+    "is_daemon_running",
+    "is_alive",
+]
+

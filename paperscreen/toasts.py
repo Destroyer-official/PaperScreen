@@ -59,3 +59,6 @@ def show(title: str, body: str, reminder: bool = False) -> bool:
         return proc.returncode == 0
     except (OSError, subprocess.TimeoutExpired):
         return False
+
+
+__all__ = ["show"]

@@ -50,7 +50,8 @@ def main(argv=None) -> int:
     p_br.add_argument("--detached", action="store_true", help="run in background (toast reminders)")
     p_br.add_argument("--console", action="store_true", help="console output instead of toasts")
 
-    sub.add_parser("doctor", help="diagnose APIs, DDC, HDR, matrix round-trip, restore")
+    p_doc = sub.add_parser("doctor", help="diagnose APIs, DDC, HDR, matrix round-trip, restore")
+    p_doc.add_argument("--repair", action="store_true", help="repair display state, restore unrestored backlight/smoothing, reset matrix to identity")
 
     p_matrix = sub.add_parser("matrix", help="preview a preset matrix")
     p_matrix.add_argument(
@@ -177,7 +178,7 @@ def main(argv=None) -> int:
         return autostart(args.enable, args.disable)
 
     if args.command == "doctor":
-        return doctor()
+        return doctor(repair=getattr(args, "repair", False))
 
     if args.command == "matrix":
         m = color_matrix.preset(args.preset)
@@ -243,9 +244,49 @@ def autostart(enable: bool, disable: bool) -> int:
         return 1
 
 
-def doctor() -> int:
-    """Live diagnostics with guaranteed restore."""
+def doctor(repair: bool = False) -> int:
+    """Live diagnostics or state repair with guaranteed restore."""
     from . import winlib
+
+    if repair:
+        print("== PaperScreen doctor (--repair) ==")
+        # 1) Reset Magnification matrix to identity
+        try:
+            winlib.mag_initialize()
+            winlib.mag_set_color_effect(color_matrix.identity())
+            print("[ok] Reset Magnification color matrix to neutral identity")
+        except Exception as exc:
+            print(f"[warn] Magnification matrix reset: {exc}")
+
+        # 2) Repair backlight from persistent journal
+        try:
+            rep = backlight.repair()
+            if rep.get("restored"):
+                for r in rep["restored"]:
+                    print(f"[ok] Restored monitor {r['name']} to {r['to']}% via {r.get('method', 'ddc').upper()}")
+            if rep.get("failed"):
+                for f in rep["failed"]:
+                    print(f"[warn] Failed to restore monitor {f['name']}: {f.get('reason')}")
+            if not rep.get("restored") and not rep.get("failed"):
+                print("[ok] No pending or unrestored backlight records in journal")
+        except Exception as exc:
+            print(f"[warn] Backlight repair: {exc}")
+
+        # 3) Restore ClearType font smoothing
+        try:
+            ct_rep = cleartype.restore_previous()
+            if ct_rep.get("changed"):
+                print(f"[ok] Restored font smoothing to saved type {ct_rep.get('restored')}")
+            else:
+                print("[ok] Font smoothing already standard or no pending restore")
+        except Exception as exc:
+            print(f"[warn] Font smoothing restore: {exc}")
+
+        # 4) Normalize journal state
+        signals.update(active=False, pid=None, status="repaired")
+        print("[ok] Persistent state journal normalized (active=False)")
+        print("== Repair complete ==")
+        return 0
 
     print("== PaperScreen doctor ==")
     ok = True
@@ -347,6 +388,13 @@ def doctor() -> int:
 
     print("== done ==")
     return 0 if ok else 1
+
+
+__all__ = [
+    "main",
+    "autostart",
+    "doctor",
+]
 
 
 if __name__ == "__main__":

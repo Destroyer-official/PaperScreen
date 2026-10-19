@@ -1,46 +1,48 @@
 # PaperScreen 📜
 
-> **The Zero-Dependency Paper Display & Circadian Engine for Windows**  
-> *Transform your standard monitor into a glare-free paper surface for fatigue-free coding, reading, and deep work.*
+> **Zero Third-Party Dependency Paper Display & Circadian Engine for Windows**  
+> *Transform your standard monitor into a matte, low-glare paper surface to help mitigate digital eye strain during coding, reading, and deep work.*
 
 [![CI](https://github.com/Destroyer-official/PaperScreen/actions/workflows/ci.yml/badge.svg)](https://github.com/Destroyer-official/PaperScreen/actions)
 [![Release](https://img.shields.io/github/v/release/Destroyer-official/PaperScreen?include_prereleases&color=blue)](https://github.com/Destroyer-official/PaperScreen/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/python-3.10+-brightgreen.svg)](https://www.python.org/)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows%208%20%7C%2010%20%7C%2011-0078D6.svg)](https://www.microsoft.com/windows)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-0-success.svg)](#zero-dependencies)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20runtime%20python%20pkgs-success.svg)](#zero-dependencies)
 
 ---
 
 ## 📖 Overview
 
-Standard computer monitors are emissive light sources blasting up to 400 cd/m² of unbuffered `#FFFFFF` light against pitch `#000000` blacks. This extreme 1000:1+ contrast ratio and harsh RGB saturation induce pupillary stress, reduce blink rates, and exacerbate digital eye strain.
+Standard computer monitors are emissive light sources blasting up to 400 cd/m² of unbuffered `#FFFFFF` light against pitch `#000000` blacks. This high contrast ratio and saturated RGB primaries can contribute to pupillary fatigue, reduced blink rates, and ocular dryness.
 
-**PaperScreen** transforms your Windows desktop into an authentic paper surface by combining **four evidence-backed interventions**:
+**PaperScreen** transforms your Windows desktop appearance by combining **four ergonomic interventions**:
 
-1. **OS-Wide 5x5 Color Matrix Engine** (Windows Magnification API): Lifts pure digital black to soft charcoal (`#1E1C1A`), compresses white to unbleached parchment (`#F3EBDD`), and attenuates harsh primary color saturation.
-2. **Dual-Channel Hardware Backlight Sync**: Real hardware brightness control (0–100) via DDC/CI over HDMI/DP for external monitors + WMI for internal laptop displays.
-3. **20-20-20 Micro-Break Watchdog**: Idle-aware, non-annoying reminders (every 20 minutes, look 20 feet away for 20 seconds).
-4. **Grayscale Font Smoothing**: Switches ClearType subpixel rendering to grayscale with a system-wide `WM_SETTINGCHANGE` broadcast, eliminating chromatic color fringing on tinted text.
+1. **OS-Wide 5x5 Color Matrix Engine** (Windows Magnification API): Algorithmic tone mapping that lifts pure digital black to charcoal (`#1E1C1A`), compresses white to unbleached parchment (`#F3EBDD`), and attenuates primary color saturation.
+2. **Dual-Channel Hardware Backlight Sync**: Real hardware brightness control (0–100) mapped to device physical ranges via DDC/CI over HDMI/DP for external monitors + WMI for internal laptop displays.
+3. **20-20-20 Micro-Break Watchdog**: Idle-aware, non-intrusive break reminders (every 20 minutes, look 20 feet away for 20 seconds).
+4. **Grayscale Font Smoothing**: Switches ClearType subpixel rendering to grayscale with a system-wide `WM_SETTINGCHANGE` broadcast, reducing chromatic color fringing on tinted text.
 
-> 🩺 **Medical & Scientific Honesty**: Blue-light filters do **not** cure eye strain ([Cochrane Systematic Review 2023, 17 RCTs](https://pubmed.ncbi.nlm.nih.gov/37593770/)). Eye strain is primarily caused by **reduced blink frequency, dry ocular surface, and luminance mismatch** ([TFOS Lifestyle Report 2023, PMID 37062428](https://pubmed.ncbi.nlm.nih.gov/37062428/)). PaperScreen's efficacy lies in **luminance matching + micro-breaks + rendering quality** — warm tinting is scientifically positioned for **circadian melatonin hygiene** (CIE S 026:2018), not marketing hype.
+> 🩺 **Medical & Scientific Honesty**: Blue-light software filters do **not** cure eye strain ([Cochrane Systematic Review 2023, 17 RCTs](https://pubmed.ncbi.nlm.nih.gov/37593770/)). Eye strain is primarily caused by **reduced blink frequency, incomplete blinks, ocular dryness, and excessive luminance mismatch** ([TFOS Lifestyle Report 2023, PMID 37062428](https://pubmed.ncbi.nlm.nih.gov/37062428/); [clinical incomplete blink analysis 2024–2026, PMID 39491645](https://pubmed.ncbi.nlm.nih.gov/39491645/)). PaperScreen's approach focuses on **ambient luminance matching, structured micro-breaks, and glare reduction**. Warm color transforms serve as software-level approximations for **circadian melatonin hygiene** (CIE S 026:2018), bounded by the physical colorimetry and panel characteristics of your display.
 
 ---
 
 ## 🎨 Color Presets
 
+*Note: Target CCT values are approximate software color-transform models, not calibrated physical display emissions.*
+
 | Preset | Target CCT | Desaturation | Black Floor | White Ceiling | Best For |
 |---|---|---|---|---|---|
-| `paper` *(default)* | 4400 K | 65% | 0.10 | 0.90 | Daylight coding, web reading, authentic matte print look |
-| `sepia` | 3600 K | 70% | 0.12 | 0.86 | Antique book aesthetic & evening reading |
-| `warm_reading` | 3000 K | 55% | 0.12 | 0.84 | Long PDF & textbook study under dim amber lighting |
-| `eink` | 6500 K | 100% | 0.08 | 0.92 | High-contrast ReMarkable/Boox neutral monochrome |
-| `eink_warm` | 4000 K | 100% | 0.08 | 0.90 | Kindle Paperwhite warm amber light emulation |
-| `amber_candle` | 2200 K | 75% | 0.08 | 0.82 | Daylight Computer Sol:OS pure amber reading (>95% blue suppression) |
-| `nightpaper` | 3200 K | 60% | 0.07 | 0.72 | Late night deep work (PWM-safe matrix dimming) |
-| `inverted_paper` | 4400 K | 20% | 0.10 | 0.90 | Smart Dark Paper: hue-preserving cross-matrix (syntax highlighting intact) |
+| `paper` *(default)* | ~4400 K | 65% | 0.10 | 0.90 | Daylight coding, web reading, authentic matte print look |
+| `sepia` | ~3600 K | 70% | 0.12 | 0.86 | Antique book aesthetic & evening reading |
+| `warm_reading` | ~3000 K | 55% | 0.12 | 0.84 | Long PDF & textbook study under dim ambient lighting |
+| `eink` | 6500 K (Neutral) | 100% | 0.08 | 0.92 | Strictly achromatic neutral grayscale monochrome (R=G=B) |
+| `eink_warm` | ~4000 K | 100% | 0.08 | 0.90 | Warm monochrome paper emulation |
+| `amber_candle` | ~2200 K | 75% | 0.08 | 0.82 | Deep amber reading with heavy blue-channel attenuation |
+| `nightpaper` | ~3200 K | 60% | 0.07 | 0.72 | Late night deep work (software-level matrix luminance reduction) |
+| `inverted_paper` | ~4400 K | 20% | 0.10 | 0.90 | Dark Paper: contrast inversion preserving syntax distinction |
 | `custom` | Dynamic | Dynamic | Dynamic | Dynamic | Real-time live slider calibration via GUI (`--gui`) |
-| `auto` | Dynamic | Dynamic | Dynamic | Dynamic | Automated circadian day ↔ night sync (standard or NOAA solar) |
+| `auto` | Dynamic | Dynamic | Dynamic | Dynamic | Automated circadian day ↔ night sync (standard hours or NOAA solar) |
 
 ---
 
@@ -124,25 +126,27 @@ python -m paperscreen config --set kelvin=4800 --set backlight_day=55
 
 ---
 
-## 🛡️ Production Reliability & Safety
-
-- **Session-Bound Safety**: The Magnification API color effect lives exclusively within the Desktop Window Manager (DWM). If the process crashes or is forcefully killed, Windows **automatically clears the effect** — you can never be left stuck with a tinted screen.
-- **Explorer Crash Recovery**: Listens for the `TaskbarCreated` broadcast message to automatically restore the notification icon if `explorer.exe` restarts.
+## 🛡️ Reliability & State Recovery
+ 
+- **DWM Session-Bound Magnification**: The Windows Magnification API color effect lives exclusively within the Desktop Window Manager (DWM) session. If the daemon process exits or is terminated, DWM automatically reverts the color transform to identity.
+- **Session Lock & Unlock Isolation**: Registers for `WM_WTSSESSION_CHANGE` via Terminal Services (`wtsapi32.dll`) to reset transforms to neutral identity upon workstation lock (`Win+L`), preventing matrix leakage on the secure desktop or Windows Hello camera, and automatically restores your paper preset upon unlock.
+- **Transactional Backlight & Smoothing Journal**: DDC/WMI hardware brightness and ClearType smoothing settings are stored in an on-disk journal synchronized with Windows Named Mutexes. If an operation is interrupted or a monitor fails to respond, original values are preserved for retry rather than discarded.
+- **One-Touch Repair Command**: Run `paperscreen doctor --repair` at any time to reset the desktop matrix to neutral identity, reapply any unrestored hardware backlight levels, and restore standard font smoothing.
+- **Explorer Restart Recovery**: Listens for the `TaskbarCreated` broadcast message to automatically restore the notification icon if `explorer.exe` restarts.
 - **Sleep & Wake Synchronization**: Listens for `WM_POWERBROADCAST` to smoothly reapply transforms and backlight levels when your PC wakes from sleep or hibernation.
-- **Auto-Pause for Games & Fullscreen**: Automatically pauses paper mode when a full-screen game, video, or color-sensitive program (e.g. `photoshop.exe`, `figma.exe`) is focused.
-- **Atomic State Transactions**: Uses `os.replace` (Win32 `MoveFileExW`) to ensure configuration and state journals are never corrupted by unexpected power loss.
-- **OS-Level Mutex**: Uses Windows Named Mutex (`Local\PaperScreenDaemonSingleInstanceMutex`) to prevent accidental duplicate instances.
+- **Auto-Pause for Fullscreen Apps**: Automatically pauses paper mode when a full-screen game, video, or color-sensitive program (e.g. `photoshop.exe`, `figma.exe`) is focused.
+- **OS-Level Mutexes**: Uses Windows Named Mutexes (`Local\PaperScreenDaemonSingleInstanceMutex` and `Local\PaperScreenBreaksMutex`) to prevent duplicate instances with zero TOCTOU race conditions.
 
 ---
 
 ## 🧪 Testing
 
-PaperScreen includes a comprehensive test suite covering matrix math, blackbody physics, Win32 memory alignments, and backlight logic:
+PaperScreen includes a comprehensive test suite covering color math, civil circadian rules, Win32 memory alignments, transactional recovery, and failure-path resilience:
 
 ```powershell
-python -m pytest tests/ -v
+pytest
 ```
-*Current test suite: 46 tests, 100% pass rate.*
+*Current test suite: 62 automated tests, 100% pass rate.*
 
 ---
 

@@ -51,3 +51,6 @@ paperscreen-tray = "paperscreen.daemon:daemon_main"
 [project.urls]
 Homepage = "https://github.com/paperscreen/paperscreen"
 Documentation = "https://github.com/paperscreen/paperscreen#readme"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]

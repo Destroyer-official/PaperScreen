@@ -65,7 +65,10 @@ def tint_gains(kelvin: float) -> Tuple[float, float, float]:
 
     Normalized so the strongest channel is 1.0 (like f.lux): warm points
     keep red full and attenuate blue. Never exceeds 1 => no channel clips.
+    Standard sRGB D65 (6500 K) is strictly neutral (1.0, 1.0, 1.0).
     """
+    if abs(kelvin - 6500.0) < 1.0:
+        return (1.0, 1.0, 1.0)
     r, g, b = kelvin_to_rgb(kelvin)
     top = max(r, g, b)
     if top <= 0.0:
@@ -157,23 +160,31 @@ def apply_matrix(m, rgb: Tuple[float, float, float]) -> Tuple[float, float, floa
     return (out[0], out[1], out[2])
 
 
+def is_achromatic(matrix: Matrix, tolerance: float = 1e-5) -> bool:
+    """Return True if matrix maps every input to strictly equal R, G, B channels (neutral grayscale)."""
+    # For a matrix to be strictly achromatic, all columns 0, 1, 2 must be identical
+    for row in range(5):
+        c0, c1, c2 = matrix[row][0], matrix[row][1], matrix[row][2]
+        if abs(c0 - c1) > tolerance or abs(c0 - c2) > tolerance:
+            return False
+    return True
+
+
 def inverted_paper_matrix(
     kelvin: float = 4600.0,
     desaturation: float = 0.20,
     black_floor: float = 0.10,
     white_ceiling: float = 0.90,
 ) -> Matrix:
-    """Smart hue-preserving inverted paper matrix.
+    """Dark-mode paper matrix with chromatic polarity inversion.
 
-    Unlike naive inversion (which flips red into cyan and blue into yellow),
-    this matrix employs cross-channel coupling:
-      [R, G, B] * [[ 1/3, -2/3, -2/3],
-                   [-2/3,  1/3, -2/3],
-                   [-2/3, -2/3,  1/3]] + 1.0
-    This inverts background/foreground luminance while keeping color hues
-    (syntax highlighting, links, diffs) true to their original spectrum,
-    then maps the result onto warm dark charcoal paper (#1A1816) with
-    parchment text (#EAE2D0).
+    Rather than naive negative RGB inversion (which turns red to cyan and blue
+    to yellow), this transform applies cross-channel coupling designed to invert
+    background/foreground luminance while preserving primary chromatic dominance
+    (e.g., maintaining red emphasis on diff deletions and blue emphasis on links/syntax).
+    Hues are mapped onto warm dark charcoal paper (#1A1816) with parchment text (#EAE2D0).
+    Note: Due to channel clipping and cross-weighting, this is an artistic syntax-preserving
+    transform rather than a mathematically complete hue-angle invariant color space engine.
     """
     d = _clamp(desaturation, 0.0, 1.0)
     wr, wg, wb = LUMA_WEIGHTS["paper"]
@@ -259,5 +270,18 @@ def preset(name: str):
             contrast=cfg.get("contrast", 1.04),
         )
     raise ValueError(f"unknown preset: {name!r}")
+
+
+__all__ = [
+    "identity",
+    "tint_gains",
+    "multiply",
+    "lerp_matrix",
+    "ease",
+    "paper_matrix",
+    "inverted_paper_matrix",
+    "preset",
+    "PRESET_VALUES",
+]
 
 

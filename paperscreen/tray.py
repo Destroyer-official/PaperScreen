@@ -46,6 +46,12 @@ WM_POWERBROADCAST = 0x0218
 PBT_APMRESUMEAUTOMATIC = 0x0012
 WM_DISPLAYCHANGE = 0x007E
 
+# Terminal Services / Session Notification
+WM_WTSSESSION_CHANGE = 0x02B1
+WTS_SESSION_LOCK = 0x7
+WTS_SESSION_UNLOCK = 0x8
+NOTIFY_FOR_THIS_SESSION = 0
+
 MF_STRING = 0x00000000
 MF_POPUP = 0x00000010
 MF_CHECKED = 0x00000008
@@ -56,6 +62,17 @@ MF_DISABLED = 0x00000002
 
 TPM_RETURNCMD = 0x0100
 TPM_RIGHTBUTTON = 0x0002
+TPM_LEFTALIGN = 0x0000
+TPM_TOPALIGN = 0x0000
+
+_shell32: Optional[ctypes.WinDLL] = None
+
+def shell32() -> ctypes.WinDLL:
+    """Cached wrapper for shell32.dll."""
+    global _shell32
+    if _shell32 is None:
+        _shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    return _shell32
 
 # Menu Command IDs
 CMD_HEADER = 1000
@@ -85,6 +102,9 @@ CMD_SMOOTHING_TOGGLE = 1050
 CMD_AUTOSTART_TOGGLE = 1051
 CMD_DOCTOR = 1052
 CMD_SETTINGS = 1060
+CMD_SESSION_LOCK = 1080
+CMD_SESSION_UNLOCK = 1081
+CMD_LIVE_PREVIEW = 1082
 CMD_EXIT = 1099
 
 
@@ -261,6 +281,14 @@ class SystemTray:
         u32.SetForegroundWindow.restype = wintypes.BOOL
         u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
         u32.PostMessageW.restype = wintypes.BOOL
+        u32.RegisterClassExW.argtypes = [ctypes.POINTER(WNDCLASSEXW)]
+        u32.RegisterClassExW.restype = wintypes.ATOM
+        u32.CreateWindowExW.argtypes = [
+            wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
+        ]
+        u32.CreateWindowExW.restype = wintypes.HWND
 
         # Register TaskbarCreated message
         self.taskbar_created_msg = u32.RegisterWindowMessageW("TaskbarCreated")
@@ -275,31 +303,9 @@ class SystemTray:
 
         def _wnd_proc(hwnd, msg, wparam, lparam):
             try:
-                if msg == self.taskbar_created_msg:
-                    self._add_icon()
-                    return 0
-                if msg == WM_TRAYICON:
-                    if lparam in (WM_RBUTTONUP, WM_LBUTTONUP):
-                        self.show_menu()
-                    elif lparam == WM_LBUTTONDBLCLK:
-                        self.on_command(CMD_TOGGLE)
-                    return 0
-                if msg == WM_COMMAND:
-                    cmd_id = wintypes.LOWORD(wparam)
-                    self.on_command(cmd_id)
-                    return 0
-                if msg == WM_POWERBROADCAST and wparam == PBT_APMRESUMEAUTOMATIC:
-                    logger.info("System resumed from sleep: refreshing display effects")
-                    self.on_command(CMD_HEADER)  # refresh trigger
-                    return 0
-                if msg == WM_DISPLAYCHANGE:
-                    logger.info("Display topology/resolution changed: refreshing")
-                    self.on_command(CMD_HEADER)
-                    return 0
-                if msg == WM_DESTROY:
-                    self.remove()
-                    u32.PostQuitMessage(0)
-                    return 0
+                res = self.dispatch_message(hwnd, msg, wparam, lparam)
+                if res is not None:
+                    return res
             except Exception as exc:
                 logger.error(f"Unhandled error in tray window procedure: {exc}", exc)
             return u32.DefWindowProcW(hwnd, msg, wparam, lparam)
@@ -324,11 +330,19 @@ class SystemTray:
             logger.error("Failed to create tray hidden window")
             return False
 
+        # Register for Windows session lock/unlock notifications
+        try:
+            wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
+            wtsapi32.WTSRegisterSessionNotification.argtypes = [wintypes.HWND, wintypes.DWORD]
+            wtsapi32.WTSRegisterSessionNotification.restype = wintypes.BOOL
+            wtsapi32.WTSRegisterSessionNotification(self.hwnd, NOTIFY_FOR_THIS_SESSION)
+        except Exception as exc:
+            logger.debug(f"WTSRegisterSessionNotification registration failed: {exc}")
+
         self._add_icon()
         return True
 
     def _add_icon(self) -> None:
-        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
         j = signals.load()
         is_active = bool(j.get("active"))
         preset = j.get("preset", "paper")
@@ -342,22 +356,20 @@ class SystemTray:
         status_text = f"PaperScreen - {'Active: ' + preset.title() if is_active else 'Off'}"
         self.nid.szTip = status_text[:127]
 
-        shell32.Shell_NotifyIconW(NIM_ADD, ctypes.byref(self.nid))
+        shell32().Shell_NotifyIconW(NIM_ADD, ctypes.byref(self.nid))
 
     def update_tooltip(self, text: str, active: bool = True) -> None:
-        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
         self.nid.uFlags = NIF_ICON | NIF_TIP
         self.nid.hIcon = self.h_icon_active if active else self.h_icon_inactive
         self.nid.szTip = text[:127]
-        shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self.nid))
+        shell32().Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self.nid))
 
     def show_balloon(self, title: str, text: str) -> None:
-        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
         self.nid.uFlags = NIF_INFO
         self.nid.szInfo = text[:255]
         self.nid.szInfoTitle = title[:63]
         self.nid.dwInfoFlags = NIIF_INFO
-        shell32.Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self.nid))
+        shell32().Shell_NotifyIconW(NIM_MODIFY, ctypes.byref(self.nid))
 
     def show_menu(self) -> None:
         if not self.hwnd:
@@ -442,11 +454,93 @@ class SystemTray:
 
         # Mandatory for popup menu dismissal
         u32.SetForegroundWindow(self.hwnd)
-        u32.TrackPopupMenu(h_menu, TPM_RIGHTBUTTON, pt.x, pt.y, 0, self.hwnd, None)
+        u32.TrackPopupMenu(
+            h_menu, TPM_RIGHTBUTTON | TPM_LEFTALIGN | TPM_TOPALIGN, pt.x, pt.y, 0, self.hwnd, None
+        )
         u32.DestroyMenu(h_menu)
 
+    def dispatch_message(self, hwnd, msg, wparam, lparam) -> Optional[int]:
+        if msg == self.taskbar_created_msg:
+            self._add_icon()
+            return 0
+        if msg == WM_TRAYICON:
+            if lparam in (WM_RBUTTONUP, WM_LBUTTONUP):
+                self.show_menu()
+            elif lparam == WM_LBUTTONDBLCLK:
+                self.on_command(CMD_TOGGLE)
+            return 0
+        if msg == WM_COMMAND:
+            cmd_id = int(wparam) & 0xFFFF
+            self.on_command(cmd_id)
+            return 0
+        if msg == WM_POWERBROADCAST and wparam == PBT_APMRESUMEAUTOMATIC:
+            logger.info("System resumed from sleep: refreshing display effects")
+            self.on_command(CMD_HEADER)  # refresh trigger
+            return 0
+        if msg == WM_DISPLAYCHANGE:
+            logger.info("Display topology/resolution changed: refreshing")
+            self.on_command(CMD_HEADER)
+            return 0
+        if msg == WM_WTSSESSION_CHANGE:
+            if wparam == WTS_SESSION_LOCK:
+                logger.info("Session locked (Win+L / screensaver): resetting matrix to identity")
+                self.on_command(CMD_SESSION_LOCK)
+            elif wparam == WTS_SESSION_UNLOCK:
+                logger.info("Session unlocked: restoring active paper preset")
+                self.on_command(CMD_SESSION_UNLOCK)
+            return 0
+        if msg == WM_DESTROY:
+            self.remove()
+            winlib.user32().PostQuitMessage(0)
+            return 0
+        return None
+
     def remove(self) -> None:
-        shell32 = ctypes.WinDLL("shell32", use_last_error=True)
         if self.hwnd:
-            shell32.Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self.nid))
+            hwnd = self.hwnd
             self.hwnd = None
+            try:
+                wtsapi32 = ctypes.WinDLL("wtsapi32", use_last_error=True)
+                wtsapi32.WTSUnRegisterSessionNotification.argtypes = [wintypes.HWND]
+                wtsapi32.WTSUnRegisterSessionNotification.restype = wintypes.BOOL
+                wtsapi32.WTSUnRegisterSessionNotification(hwnd)
+            except Exception:
+                pass
+            shell32().Shell_NotifyIconW(NIM_DELETE, ctypes.byref(self.nid))
+            try:
+                winlib.user32().DestroyWindow(hwnd)
+            except Exception:
+                pass
+
+
+__all__ = [
+    "SystemTray",
+    "shell32",
+    "CMD_HEADER",
+    "CMD_TOGGLE",
+    "CMD_PRESET_PAPER",
+    "CMD_PRESET_SEPIA",
+    "CMD_PRESET_WARM_READING",
+    "CMD_PRESET_EINK",
+    "CMD_PRESET_EINK_WARM",
+    "CMD_PRESET_NIGHTPAPER",
+    "CMD_PRESET_INVERTED",
+    "CMD_PRESET_AUTO",
+    "CMD_PRESET_CUSTOM",
+    "CMD_PRESET_AMBER_CANDLE",
+    "CMD_BRI_100",
+    "CMD_BRI_75",
+    "CMD_BRI_60",
+    "CMD_BRI_40",
+    "CMD_BRI_25",
+    "CMD_BREAK_TOGGLE",
+    "CMD_BREAK_NOW",
+    "CMD_SMOOTHING_TOGGLE",
+    "CMD_AUTOSTART_TOGGLE",
+    "CMD_DOCTOR",
+    "CMD_SETTINGS",
+    "CMD_SESSION_LOCK",
+    "CMD_SESSION_UNLOCK",
+    "CMD_LIVE_PREVIEW",
+    "CMD_EXIT",
+]

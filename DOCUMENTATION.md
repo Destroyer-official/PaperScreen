@@ -42,11 +42,11 @@ The Desktop Window Manager (DWM) in Windows 8, 10, and 11 exposes hardware-accel
 - `MagUninitialize()`: Closes the magnification context.
 
 ### Session-Bound Lifecycle
-A fundamental architectural trait of `MagSetFullscreenColorEffect` is that the color transform is **session-bound to the applying process**:
+A key architectural trait of `MagSetFullscreenColorEffect` is that the color transform is **session-bound to the applying process**:
 1. When `paperscreen on` is executed, it spawns a detached resident daemon process (`paperscreen.daemon`).
 2. The daemon applies the matrix and holds the magnification session open.
 3. If the daemon process is gracefully stopped (`paperscreen off`) or forcefully killed (`taskkill /F`), DWM **automatically reverts the desktop color matrix back to neutral identity**.
-4. **Result**: A crash or abrupt termination can never leave the user's screen permanently stuck in a tinted state.
+4. In addition, persistent hardware changes (such as DDC/WMI backlight and ClearType smoothing) are recorded transactionally in `%APPDATA%/PaperScreen/state.json`, guarded by a cross-process Windows Named Mutex (`Local\PaperScreenJournalMutex`). If an operation is interrupted or a monitor is temporarily offline, the record is retained until restoration succeeds, or can be repaired at any time via `paperscreen doctor --repair`.
 
 ---
 
@@ -81,12 +81,14 @@ For each output channel $c \in \{R, G, B\}$, with white-point chromaticity gains
    where:
    - $\text{floor} \approx 0.10$ lifts pure digital black (`#000000`) to soft charcoal (`#1E1C1A`).
    - $\text{ceiling} \approx 0.92$ compresses pure digital white (`#FFFFFF`) to diffuse parchment (`#F3EBDD`).
-   - $\lambda \in [0.05, 1.0]$ scales overall luminance without altering display backlight PWM frequency.
+   - $\lambda \in [0.05, 1.0]$ scales overall matrix output luminance without altering the monitor backlight's physical duty cycle (actual temporal modulation depends on panel firmware and hardware).
+   - When neutral E-Ink (`eink`) is selected (100% desaturation, 6500 K), gains $g_c$ are strictly equal $(1.0, 1.0, 1.0)$, ensuring mathematically achromatic grayscale output ($R_{\text{out}} = G_{\text{out}} = B_{\text{out}}$).
 
 ### Inverted Paper Matrix
-For dark-mode paper rendering, the transform inverts input values while maintaining paper tone bounds:
+For dark-mode paper rendering, the transform applies cross-channel coupling designed to invert background and foreground luminance while maintaining primary chromatic dominance:
 - Input pure black $(0, 0, 0)$ maps to warm parchment text ($\approx 0.90, 0.78, 0.68$).
 - Input pure white $(1, 1, 1)$ maps to charcoal background ($\approx 0.10, 0.09, 0.08$).
+- Red and blue hues maintain chromatic distinction rather than flipping into cyan/yellow complementary negatives.
 
 ---
 
@@ -107,9 +109,10 @@ Different display hardware requires distinct control channels:
 ```
 
 1. **External Monitors (DDC/CI via `dxva2.dll`)**:
-   - Uses `GetNumberOfPhysicalMonitorsFromHMONITOR` and `GetPhysicalMonitorsFromHMONITOR`.
-   - Sends VESA MCCS brightness opcodes via `GetMonitorBrightness` and `SetMonitorBrightness`.
-   - Remembers previous brightness in `state.json` keyed by unique compound ID (`name #index`) to prevent collisions across identical multi-monitor setups.
+   - Uses `GetNumberOfPhysicalMonitorsFromHMONITOR` and `GetPhysicalMonitorsFromHMONITOR`, managed via scoped context managers (`open_physical_monitors`) to guarantee cleanup.
+   - Queries hardware min/max brightness via `GetMonitorBrightness` and normalizes the logical percentage $0..100$ onto the monitor's native hardware range:
+     $$\text{raw} = \text{lo} + \frac{\text{level}}{100} \cdot (\text{hi} - \text{lo})$$
+   - Remembers previous brightness in `state.json` keyed by unique compound ID (`name #index`). Restoration is transactional: failed or disconnected monitors remain in the recovery journal for retry.
 2. **Internal Laptop Panels (WMI)**:
    - Queries `root\wmi: WmiMonitorBrightness.CurrentBrightness`.
    - Sets brightness via `root\wmi: WmiMonitorBrightnessMethods.WmiSetBrightness`.
@@ -122,6 +125,7 @@ Different display hardware requires distinct control channels:
 - Creates a hidden message-only window (`HWND_MESSAGE`).
 - Adds a tray icon via `Shell_NotifyIconW` with flags `NIF_ICON | NIF_MESSAGE | NIF_TIP`.
 - Handles `WM_RBUTTONUP` by setting foreground focus (`SetForegroundWindow`) and displaying a Win32 popup menu via `TrackPopupMenuEx`.
+- Matrix transitions are serialized with internal re-entrant locking to prevent concurrent collision between tray menu actions and background timer polling.
 
 ### Windows Explorer Recovery (`TaskbarCreated`)
 When `explorer.exe` restarts, all notification tray icons are lost. PaperScreen registers the system-wide message:
@@ -141,8 +145,8 @@ if kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
     return 0 # Exit gracefully
 ```
 
-### Atomic Configuration Transactions
-Both `config.json` and `state.json` write to temporary files (`.tmp`) before calling `os.replace()`. On Windows, `os.replace()` invokes `MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`, guaranteeing atomic replacement that prevents file corruption during abrupt shutdowns.
+### Cross-Process State Journal Locking
+All updates to `state.json` are synchronized using the Windows Named Mutex `Local\PaperScreenJournalMutex` and written via atomic file replacement (`MoveFileExW` / `os.replace`), preventing concurrent read-modify-write lost updates between the CLI and the background daemon.
 
 ---
 

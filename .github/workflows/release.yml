@@ -12,10 +12,10 @@ jobs:
       contents: write
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4.1.7
 
     - name: Set up Python 3.11
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@82c7e631bb3cdc910f68e0081d67478d79c6982d # v5.1.0
       with:
         python-version: "3.11"
 
@@ -32,14 +32,17 @@ jobs:
       run: |
         python build_exe.py
 
-    - name: Generate SHA-256 Checksum
+    - name: Generate and Verify SHA-256 Checksum
       run: |
         $hash = Get-FileHash dist/PaperScreen/PaperScreen.exe -Algorithm SHA256
         $hash.Hash | Out-File -FilePath dist/PaperScreen/SHA256SUMS.txt -Encoding ascii
         Get-Content dist/PaperScreen/SHA256SUMS.txt
+        # Verification check
+        $verify = (Get-Content dist/PaperScreen/SHA256SUMS.txt).Trim()
+        if ($verify -ne $hash.Hash) { throw "Checksum verification mismatch" }
 
     - name: Create Release and Upload Asset
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@c062e08bd532870e20bd73abea3360c8502da14d # v2.0.8
       with:
         files: |
           dist/PaperScreen/PaperScreen.exe

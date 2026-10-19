@@ -26,28 +26,53 @@ ESCALATING = [
 ]
 
 
+_BREAKS_MUTEX_NAME = "Local\\PaperScreenBreaksMutex"
+_breaks_mutex_handle = None
+
+
 def _lock_path() -> str:
     return os.path.join(config.config_dir(), "breaks.lock")
 
 
 def _acquire_lock() -> bool:
-    os.makedirs(config.config_dir(), exist_ok=True)
-    path = _lock_path()
-    if os.path.exists(path):
+    """Acquire single-instance lock via OS Named Mutex and write PID file."""
+    global _breaks_mutex_handle
+    if sys.platform == "win32":
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                pid = int(f.read().strip() or 0)
-            from . import spawn
-            if spawn.is_alive(pid):
+            import ctypes
+            from ctypes import wintypes
+            k32 = ctypes.windll.kernel32
+            ERROR_ALREADY_EXISTS = 183
+            h = k32.CreateMutexW(None, wintypes.BOOL(True), wintypes.LPCWSTR(_BREAKS_MUTEX_NAME))
+            if not h or k32.GetLastError() == ERROR_ALREADY_EXISTS:
+                if h:
+                    k32.CloseHandle(h)
                 return False
-        except (ValueError, OSError):
+            _breaks_mutex_handle = h
+        except Exception:
             pass
-    with open(path, "w", encoding="utf-8") as f:
-        f.write(str(os.getpid()))
+
+    # Record PID file for diagnostic/management tools
+    try:
+        os.makedirs(config.config_dir(), exist_ok=True)
+        with open(_lock_path(), "w", encoding="utf-8") as f:
+            f.write(str(os.getpid()))
+    except OSError:
+        pass
     return True
 
 
 def _release_lock() -> None:
+    """Release OS Named Mutex and clean up PID file."""
+    global _breaks_mutex_handle
+    if _breaks_mutex_handle:
+        try:
+            import ctypes
+            ctypes.windll.kernel32.ReleaseMutex(_breaks_mutex_handle)
+            ctypes.windll.kernel32.CloseHandle(_breaks_mutex_handle)
+        except Exception:
+            pass
+        _breaks_mutex_handle = None
     try:
         os.remove(_lock_path())
     except OSError:
@@ -147,6 +172,14 @@ def run_detached(interval_minutes: int, duration_seconds: int) -> int:
         return 0
     except OSError:
         return 1
+
+
+__all__ = [
+    "run",
+    "run_detached",
+    "GENTLE",
+    "ESCALATING",
+]
 
 
 if __name__ == "__main__":

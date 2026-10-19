@@ -6,10 +6,11 @@ module only on Windows. Functions raise PaperAPIError with GetLastError info.
 
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import sys
 from ctypes import wintypes
-from typing import List, Optional, Tuple
+from typing import Iterator, List, Optional, Tuple
 
 IS_WINDOWS = sys.platform == "win32"
 
@@ -38,14 +39,27 @@ class PHYSICAL_MONITOR(ctypes.Structure):
     ]
 
 
-class DISPLAY_DEVICE(ctypes.Structure):
+class DISPLAY_DEVICEW(ctypes.Structure):
     _fields_ = [
         ("cb", wintypes.DWORD),
-        ("DeviceName", wintypes.CHAR * 32),
-        ("DeviceString", wintypes.CHAR * 128),
+        ("DeviceName", wintypes.WCHAR * 32),
+        ("DeviceString", wintypes.WCHAR * 128),
         ("StateFlags", wintypes.DWORD),
-        ("DeviceID", wintypes.CHAR * 128),
-        ("DeviceKey", wintypes.CHAR * 128),
+        ("DeviceID", wintypes.WCHAR * 128),
+        ("DeviceKey", wintypes.WCHAR * 128),
+    ]
+
+# Backwards compatibility alias
+DISPLAY_DEVICE = DISPLAY_DEVICEW
+
+
+class MONITORINFOEXW(ctypes.Structure):
+    _fields_ = [
+        ("cbSize", wintypes.DWORD),
+        ("rcMonitor", wintypes.RECT),
+        ("rcWork", wintypes.RECT),
+        ("dwFlags", wintypes.DWORD),
+        ("szDevice", wintypes.WCHAR * 32),
     ]
 
 
@@ -187,45 +201,67 @@ def get_physical_monitors() -> List[Tuple[int, str]]:
     """Open physical monitors via DDC. Returns [(handle, description)].
 
     Handles must be released via destroy_physical_monitors().
+    Guarantees that already-opened handles are destroyed if enumeration fails.
     """
     out: List[Tuple[int, str]] = []
-    for hmon, _hdc, _rect in enum_monitor_handles():
-        count = wintypes.DWORD()
-        dll = dxva2()
-        dll.GetNumberOfPhysicalMonitorsFromHMONITOR.restype = wintypes.BOOL
-        dll.GetNumberOfPhysicalMonitorsFromHMONITOR.argtypes = [
-            wintypes.HMONITOR, ctypes.POINTER(wintypes.DWORD)
-        ]
-        if not dll.GetNumberOfPhysicalMonitorsFromHMONITOR(hmon, ctypes.byref(count)):
-            continue
-        if count.value == 0:
-            continue
-        arr = (PHYSICAL_MONITOR * count.value)()
-        dll.GetPhysicalMonitorsFromHMONITOR.restype = wintypes.BOOL
-        dll.GetPhysicalMonitorsFromHMONITOR.argtypes = [
-            wintypes.HMONITOR, wintypes.DWORD, ctypes.POINTER(PHYSICAL_MONITOR)
-        ]
-        if not dll.GetPhysicalMonitorsFromHMONITOR(hmon, count.value, arr):
-            continue
-        for i in range(count.value):
-            out.append((arr[i].hPhysicalMonitor, arr[i].szPhysicalMonitorDescription or "?"))
-    return out
+    try:
+        for hmon, _hdc, _rect in enum_monitor_handles():
+            count = wintypes.DWORD()
+            dll = dxva2()
+            dll.GetNumberOfPhysicalMonitorsFromHMONITOR.restype = wintypes.BOOL
+            dll.GetNumberOfPhysicalMonitorsFromHMONITOR.argtypes = [
+                wintypes.HMONITOR, ctypes.POINTER(wintypes.DWORD)
+            ]
+            if not dll.GetNumberOfPhysicalMonitorsFromHMONITOR(hmon, ctypes.byref(count)):
+                continue
+            if count.value == 0:
+                continue
+            arr = (PHYSICAL_MONITOR * count.value)()
+            dll.GetPhysicalMonitorsFromHMONITOR.restype = wintypes.BOOL
+            dll.GetPhysicalMonitorsFromHMONITOR.argtypes = [
+                wintypes.HMONITOR, wintypes.DWORD, ctypes.POINTER(PHYSICAL_MONITOR)
+            ]
+            if not dll.GetPhysicalMonitorsFromHMONITOR(hmon, count.value, arr):
+                continue
+            for i in range(count.value):
+                out.append((arr[i].hPhysicalMonitor, arr[i].szPhysicalMonitorDescription or "?"))
+        return out
+    except Exception:
+        if out:
+            destroy_physical_monitors([h for h, _ in out])
+        raise
 
 
-def destroy_physical_monitors(handles: List[int]) -> None:
+def destroy_physical_monitors(handles: List[int]) -> bool:
+    """Safely destroy physical monitor handles. Returns True if successful."""
     if not handles:
-        return
-    dll = dxva2()
-    arr = (PHYSICAL_MONITOR * len(handles))()
-    for i, h in enumerate(handles):
-        arr[i].hPhysicalMonitor = h
-    dll.DestroyPhysicalMonitors.restype = wintypes.BOOL
-    dll.DestroyPhysicalMonitors.argtypes = [wintypes.DWORD, ctypes.POINTER(PHYSICAL_MONITOR)]
-    dll.DestroyPhysicalMonitors(len(handles), arr)
+        return True
+    try:
+        dll = dxva2()
+        arr = (PHYSICAL_MONITOR * len(handles))()
+        for i, h in enumerate(handles):
+            arr[i].hPhysicalMonitor = h
+        dll.DestroyPhysicalMonitors.restype = wintypes.BOOL
+        dll.DestroyPhysicalMonitors.argtypes = [wintypes.DWORD, ctypes.POINTER(PHYSICAL_MONITOR)]
+        return bool(dll.DestroyPhysicalMonitors(len(handles), arr))
+    except Exception:
+        return False
 
 
-def ddc_get_brightness(handle: int) -> Optional[int]:
-    """GetMonitorBrightness(handle) -> current (0..100) or None on failure."""
+@contextlib.contextmanager
+def open_physical_monitors() -> Iterator[List[Tuple[int, str]]]:
+    """Context manager for opened physical monitors ensuring handles are destroyed on exit."""
+    monitors: List[Tuple[int, str]] = []
+    try:
+        monitors = get_physical_monitors()
+        yield monitors
+    finally:
+        if monitors:
+            destroy_physical_monitors([h for h, _ in monitors])
+
+
+def ddc_get_raw_brightness(handle: int) -> Optional[Tuple[int, int, int]]:
+    """GetMonitorBrightness(handle) -> (minimum, current, maximum) or None on failure."""
     dll = dxva2()
     dll.GetMonitorBrightness.restype = wintypes.BOOL
     dll.GetMonitorBrightness.argtypes = [
@@ -237,19 +273,38 @@ def ddc_get_brightness(handle: int) -> Optional[int]:
     maximum = wintypes.DWORD()
     if not dll.GetMonitorBrightness(handle, ctypes.byref(minimum), ctypes.byref(current), ctypes.byref(maximum)):
         return None
-    lo, hi, cur = minimum.value, maximum.value, current.value
+    return (minimum.value, current.value, maximum.value)
+
+
+def ddc_get_brightness(handle: int) -> Optional[int]:
+    """GetMonitorBrightness(handle) -> current percentage (0..100) or None on failure."""
+    raw = ddc_get_raw_brightness(handle)
+    if raw is None:
+        return None
+    lo, cur, hi = raw
     if hi <= lo:
-        return cur
+        return max(0, min(100, cur))
     return int(round((cur - lo) * 100.0 / (hi - lo)))
 
 
 def ddc_set_brightness(handle: int, level: int) -> bool:
-    """SetMonitorBrightness(handle, level 0..100)."""
+    """SetMonitorBrightness(handle, level 0..100) mapped onto the monitor's native range."""
     level = max(0, min(100, int(level)))
+    raw = ddc_get_raw_brightness(handle)
+    if raw is not None:
+        lo, _cur, hi = raw
+        if hi > lo:
+            target = int(round(lo + (level / 100.0) * (hi - lo)))
+            device_val = max(lo, min(hi, target))
+        else:
+            device_val = level
+    else:
+        device_val = level
+
     dll = dxva2()
     dll.SetMonitorBrightness.restype = wintypes.BOOL
     dll.SetMonitorBrightness.argtypes = [wintypes.HANDLE, wintypes.DWORD]
-    ok = bool(dll.SetMonitorBrightness(handle, wintypes.DWORD(level)))
+    ok = bool(dll.SetMonitorBrightness(handle, wintypes.DWORD(device_val)))
     return ok
 
 
@@ -307,9 +362,15 @@ def get_font_smoothing_type() -> Optional[int]:
 
 
 def set_font_smoothing_type(value: int) -> bool:
-    """Set FE_FONTSMOOTHINGSTANDARD / FE_FONTSMOOTHINGCLEARTYPE with system broadcast."""
+    """Set FE_FONTSMOOTHINGSTANDARD / FE_FONTSMOOTHINGCLEARTYPE with system broadcast.
+
+    In the Win32 SystemParametersInfoW ABI for SPI_SETFONTSMOOTHINGTYPE, the 4th parameter pvParam
+    is passed by value as a pointer-sized integer (PVOID/ULONG_PTR), NOT as an indirect pointer.
+    Passing a pointer reference causes Windows to fail with ERROR_INVALID_PARAMETER (res=0).
+    Using ctypes.c_void_p ensures standard pointer-width integer dispatch across 32-bit and 64-bit builds.
+    """
     ok = user32().SystemParametersInfoW(
-        SPI_SETFONTSMOOTHINGTYPE, 0, wintypes.UINT(value), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
+        SPI_SETFONTSMOOTHINGTYPE, 0, ctypes.c_void_p(int(value)), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
     )
     return bool(ok)
 
@@ -319,12 +380,18 @@ def set_font_smoothing_type(value: int) -> bool:
 # ---------------------------------------------------------------------------
 
 class GAMMA_RAMP(ctypes.Structure):
-    _fields_ = [("rgb", (wintypes.WORD * 3 * 256))]
+    _fields_ = [
+        ("Red", wintypes.WORD * 256),
+        ("Green", wintypes.WORD * 256),
+        ("Blue", wintypes.WORD * 256),
+    ]
 
 
 def set_gamma_ramp(gains_rgb: Tuple[float, float, float], lift: float = 0.0) -> bool:
-    """SetDeviceGammaRamp on all active DCs. gains 0..1, optional black lift.
+    """SetDeviceGammaRamp on all active monitors. gains 0..1, optional black lift.
 
+    Uses per-monitor Device Contexts via CreateDCW(szDevice) to ensure proper
+    multi-monitor hardware isolation rather than writing repeatedly to the primary DC.
     Note: many drivers clamp gamma ramps; used only as a fallback path.
     """
     r_gain, g_gain, b_gain = gains_rgb
@@ -332,19 +399,41 @@ def set_gamma_ramp(gains_rgb: Tuple[float, float, float], lift: float = 0.0) -> 
     for i in range(256):
         liftv = int(lift * 65535 * (1.0 - i / 255.0))
         base = int(65535 * (i / 255.0))
-        ramp.rgb[0][i] = max(0, min(65535, int(base * r_gain) + liftv))
-        ramp.rgb[1][i] = max(0, min(65535, int(base * g_gain) + liftv))
-        ramp.rgb[2][i] = max(0, min(65535, int(base * b_gain) + liftv))
+        ramp.Red[i] = max(0, min(65535, int(base * r_gain) + liftv))
+        ramp.Green[i] = max(0, min(65535, int(base * g_gain) + liftv))
+        ramp.Blue[i] = max(0, min(65535, int(base * b_gain) + liftv))
+
     ok_any = False
+    u32 = user32()
+    g32 = gdi32()
+
     for hmon, _hdc, _rect in enum_monitor_handles():
-        hdc = user32().GetDC(None)
+        mi = MONITORINFOEXW()
+        mi.cbSize = ctypes.sizeof(MONITORINFOEXW)
+        hdc = None
+        is_created_dc = False
+
+        if u32.GetMonitorInfoW(hmon, ctypes.byref(mi)) and mi.szDevice:
+            dev_name = mi.szDevice
+            hdc = g32.CreateDCW(dev_name, dev_name, None, None)
+            is_created_dc = bool(hdc)
+
+        if not hdc:
+            hdc = u32.GetDC(None)
+            is_created_dc = False
+
         if not hdc:
             continue
+
         try:
-            if gdi32().SetDeviceGammaRamp(hdc, ctypes.byref(ramp)):
+            if g32.SetDeviceGammaRamp(hdc, ctypes.byref(ramp)):
                 ok_any = True
         finally:
-            user32().ReleaseDC(None, hdc)
+            if is_created_dc:
+                g32.DeleteDC(hdc)
+            else:
+                u32.ReleaseDC(None, hdc)
+
     return ok_any
 
 
@@ -571,5 +660,37 @@ def get_foreground_process_name() -> str:
     except Exception:
         pass
     return ""
+
+
+__all__ = [
+    "IS_WINDOWS",
+    "PaperAPIError",
+    "MAGCOLOREFFECT",
+    "PHYSICAL_MONITOR",
+    "DISPLAY_DEVICEW",
+    "DISPLAY_DEVICE",
+    "MONITORINFOEXW",
+    "GAMMA_RAMP",
+    "FE_FONTSMOOTHINGSTANDARD",
+    "FE_FONTSMOOTHINGCLEARTYPE",
+    "get_tick_count_64",
+    "mag_initialize",
+    "mag_uninitialize",
+    "mag_set_color_effect",
+    "mag_get_color_effect",
+    "enum_monitor_handles",
+    "get_physical_monitors",
+    "destroy_physical_monitors",
+    "open_physical_monitors",
+    "ddc_get_raw_brightness",
+    "ddc_get_brightness",
+    "ddc_set_brightness",
+    "get_font_smoothing_type",
+    "set_font_smoothing_type",
+    "set_gamma_ramp",
+    "get_advanced_color_info",
+    "is_foreground_fullscreen",
+    "get_foreground_process_name",
+]
 
 

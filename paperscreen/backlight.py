@@ -8,10 +8,16 @@ Supports multi-monitor setups with identical display names.
 from __future__ import annotations
 
 import subprocess
+import threading
+import time
 from typing import List, Optional
 
 from . import logger, signals, winlib
 from .winlib import PaperAPIError
+
+_BACKLIGHT_LOCK = threading.Lock()
+_LAST_SET_TIME = 0.0
+_LAST_SET_LEVEL = None
 
 
 class MonitorBrightness:
@@ -64,26 +70,35 @@ def _wmi_set_brightness(level: int) -> bool:
 # Public Backlight API
 # ---------------------------------------------------------------------------
 
+def _extract_original(val) -> Optional[int]:
+    """Extract integer brightness from either legacy int or structured dict."""
+    if isinstance(val, int):
+        return val
+    if isinstance(val, dict):
+        orig = val.get("original")
+        if isinstance(orig, int):
+            return orig
+    return None
+
+
 def list_monitors() -> List[dict]:
     """Info dict per monitor (current brightness if readable)."""
     out = []
-    opened = []
     try:
-        opened = winlib.get_physical_monitors()
-        for i, (handle, name) in enumerate(opened):
-            cur = winlib.ddc_get_brightness(handle)
-            out.append({
-                "id": f"{name} #{i+1}",
-                "name": name,
-                "brightness": cur,
-                "ddc": cur is not None,
-                "method": "ddc" if cur is not None else "unsupported",
-            })
+        with winlib.open_physical_monitors() as opened:
+            for i, (handle, name) in enumerate(opened):
+                cur = winlib.ddc_get_brightness(handle)
+                if i > 0:
+                    time.sleep(0.05)  # I2C recovery between monitors
+                out.append({
+                    "id": f"{name} #{i+1}",
+                    "name": name,
+                    "brightness": cur,
+                    "ddc": cur is not None,
+                    "method": "ddc" if cur is not None else "unsupported",
+                })
     except PaperAPIError as exc:
         logger.warn(f"Failed to enumerate DDC monitors: {exc}")
-    finally:
-        if opened:
-            winlib.destroy_physical_monitors([h for h, _ in opened])
 
     # If no DDC monitors found, check for internal laptop display
     if not out:
@@ -100,48 +115,77 @@ def list_monitors() -> List[dict]:
     return out
 
 
-def set_brightness(level: int, remember: bool = True) -> dict:
+def set_brightness(level: int, remember: bool = True, rollback_on_failure: bool = False) -> dict:
     """Set brightness 0..100 on all DDC/WMI monitors. Returns report.
 
     Remembers previous values in on-disk journal so `paperscreen off` restores them.
     Keys monitors uniquely by compound ID so identical models do not collide.
+    If rollback_on_failure is True, rolls back already changed monitors if a subsequent monitor fails.
     """
+    global _LAST_SET_TIME, _LAST_SET_LEVEL
     level = max(0, min(100, int(level)))
-    report = {"requested": level, "set": [], "failed": [], "skipped": []}
-    journal = signals.load()
-    previous_by_key: dict = journal.get("backlight_previous", {})
-    handles = []
+    report = {"requested": level, "set": [], "failed": [], "skipped": [], "rolled_back": False}
 
-    try:
-        opened = winlib.get_physical_monitors()
-        for i, (handle, name) in enumerate(opened):
-            handles.append(handle)
-            key = f"{name} #{i+1}"
-            prev = winlib.ddc_get_brightness(handle)
-            if prev is None:
-                report["failed"].append({"name": key, "reason": "read brightness failed"})
-                continue
-            if winlib.ddc_set_brightness(handle, level):
-                report["set"].append({"name": key, "from": prev, "to": level, "method": "ddc"})
-                if remember and key not in previous_by_key:
-                    previous_by_key[key] = prev
-            else:
-                report["failed"].append({"name": key, "reason": "SetMonitorBrightness failed"})
-    except PaperAPIError as exc:
-        logger.warn(f"DDC set_brightness error: {exc}")
-    finally:
-        if handles:
-            winlib.destroy_physical_monitors(handles)
+    with _BACKLIGHT_LOCK:
+        now = time.monotonic()
+        # Trailing-edge deduplication: skip redundant write if same level requested within 150ms
+        if level == _LAST_SET_LEVEL and (now - _LAST_SET_TIME) < 0.15:
+            report["skipped"].append({"reason": "debounced"})
+            return report
+
+        _LAST_SET_TIME = now
+        _LAST_SET_LEVEL = level
+
+        journal = signals.load()
+        previous_by_key: dict = dict(journal.get("backlight_previous", {}))
+
+        try:
+            with winlib.open_physical_monitors() as opened:
+                for i, (handle, name) in enumerate(opened):
+                    key = f"{name} #{i+1}"
+                    prev = winlib.ddc_get_brightness(handle)
+                    time.sleep(0.05)  # I2C recovery window between read and write
+                    if prev is None:
+                        report["failed"].append({"name": key, "reason": "read brightness failed"})
+                        continue
+                    if winlib.ddc_set_brightness(handle, level):
+                        time.sleep(0.15)  # DDC write settling time for monitor microcontroller
+                        report["set"].append({"name": key, "from": prev, "to": level, "method": "ddc"})
+                        if remember and key not in previous_by_key:
+                            previous_by_key[key] = {"original": prev, "status": "active", "set_level": level}
+                    else:
+                        report["failed"].append({"name": key, "reason": "SetMonitorBrightness failed"})
+                        if rollback_on_failure:
+                            break
+        except PaperAPIError as exc:
+            logger.warn(f"DDC set_brightness error: {exc}")
+
+    # Rollback DDC changes if failure occurred and rollback requested
+    if rollback_on_failure and report["failed"] and report["set"]:
+        logger.warn("Activation failure detected; rolling back already modified monitors")
+        try:
+            with winlib.open_physical_monitors() as opened:
+                for i, (handle, name) in enumerate(opened):
+                    key = f"{name} #{i+1}"
+                    for s in report["set"]:
+                        if s["name"] == key:
+                            winlib.ddc_set_brightness(handle, s["from"])
+                            previous_by_key.pop(key, None)
+        except Exception as exc:
+            logger.error(f"Rollback error: {exc}")
+        report["rolled_back"] = True
+        report["set"] = []
+        return report
 
     # WMI fallback if no DDC monitors were set
-    if not report["set"]:
+    if not report["set"] and not report["failed"]:
         wmi_prev = _wmi_get_brightness()
         if wmi_prev is not None:
             wmi_key = "Internal Display #1"
             if _wmi_set_brightness(level):
                 report["set"].append({"name": wmi_key, "from": wmi_prev, "to": level, "method": "wmi"})
                 if remember and wmi_key not in previous_by_key:
-                    previous_by_key[wmi_key] = wmi_prev
+                    previous_by_key[wmi_key] = {"original": wmi_prev, "status": "active", "set_level": level}
             else:
                 report["failed"].append({"name": wmi_key, "reason": "WMI set brightness failed"})
 
@@ -152,49 +196,75 @@ def set_brightness(level: int, remember: bool = True) -> dict:
 
 
 def restore() -> dict:
-    """Restore brightness from the on-disk journal (best-effort)."""
-    report = {"restored": [], "failed": []}
+    """Restore brightness from the on-disk journal transactional record.
+    
+    Retains entries for any monitors that fail to restore so subsequent
+    retries or `paperscreen doctor --repair` can restore them.
+    """
+    report = {"restored": [], "failed": [], "pending": []}
     journal = signals.load()
-    previous_by_key: dict = journal.get("backlight_previous", {})
+    previous_by_key: dict = dict(journal.get("backlight_previous", {}))
     if not previous_by_key:
         return report
 
-    handles = []
+    restored_keys = set()
+
     try:
-        opened = winlib.get_physical_monitors()
-        handles = [handle for handle, _ in opened]
+        with winlib.open_physical_monitors() as opened:
+            for i, (handle, name) in enumerate(opened):
+                key = f"{name} #{i+1}"
+                entry = previous_by_key.get(key)
+                if entry is None:
+                    # Also fallback to matching bare name for backwards compatibility
+                    entry = previous_by_key.get(name)
+                    if entry is not None:
+                        key = name
 
-        for i, (handle, name) in enumerate(opened):
-            key = f"{name} #{i+1}"
-            # Also fallback to matching bare name for backwards compatibility
-            prev = previous_by_key.get(key)
-            if prev is None:
-                prev = previous_by_key.get(name)
-
-            if isinstance(prev, int):
-                if winlib.ddc_set_brightness(handle, prev):
-                    report["restored"].append({"name": key, "to": prev, "method": "ddc"})
-                else:
-                    report["failed"].append({"name": key, "reason": "DDC set failed"})
+                prev_val = _extract_original(entry)
+                if prev_val is not None:
+                    if winlib.ddc_set_brightness(handle, prev_val):
+                        time.sleep(0.15)  # DDC write settling time
+                        report["restored"].append({"name": key, "to": prev_val, "method": "ddc"})
+                        restored_keys.add(key)
+                    else:
+                        report["failed"].append({"name": key, "reason": "DDC set failed"})
     except PaperAPIError as exc:
         logger.warn(f"DDC restore error: {exc}")
-    finally:
-        if handles:
-            try:
-                winlib.destroy_physical_monitors(handles)
-            except PaperAPIError:
-                pass
 
     # Restore WMI internal display if present in journal
     wmi_key = "Internal Display #1"
     if wmi_key in previous_by_key:
-        target = previous_by_key[wmi_key]
-        if isinstance(target, int) and _wmi_set_brightness(target):
-            report["restored"].append({"name": wmi_key, "to": target, "method": "wmi"})
-        else:
-            report["failed"].append({"name": wmi_key, "reason": "WMI restore failed"})
+        wmi_val = _extract_original(previous_by_key[wmi_key])
+        if wmi_val is not None:
+            if _wmi_set_brightness(wmi_val):
+                report["restored"].append({"name": wmi_key, "to": wmi_val, "method": "wmi"})
+                restored_keys.add(wmi_key)
+            else:
+                report["failed"].append({"name": wmi_key, "reason": "WMI restore failed"})
 
-    journal.pop("backlight_previous", None)
-    journal.pop("backlight_level", None)
-    signals.save(journal)
+    # Transactional journal update: only remove successfully restored monitors
+    for rk in restored_keys:
+        previous_by_key.pop(rk, None)
+
+    report["pending"] = list(previous_by_key.keys())
+
+    if not previous_by_key:
+        signals.update(backlight_previous=None, backlight_level=None)
+    else:
+        signals.update(backlight_previous=previous_by_key)
+
     return report
+
+
+def repair() -> dict:
+    """Scan journal for unrestored/pending backlight records and attempt restoration."""
+    return restore()
+
+
+__all__ = [
+    "MonitorBrightness",
+    "list_monitors",
+    "set_brightness",
+    "restore",
+    "repair",
+]

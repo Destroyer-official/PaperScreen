@@ -53,12 +53,24 @@ CYCLE_PRESETS = (
 )
 
 
+_transition_lock = threading.Lock()
+
+
 def matrix_for(preset: str, night: bool = False):
     cfg = config.load()
-    if preset in color_matrix.PRESETS:
-        m = color_matrix.preset(preset)
-    elif preset == "auto":
+    dim = night and cfg.get("night_dim_matrix", False)
+    if preset == "auto":
         m = color_matrix.preset("nightpaper" if night else "paper")
+    elif preset in color_matrix.PRESET_VALUES:
+        params = dict(color_matrix.PRESET_VALUES[preset])
+        if dim and "luminance" not in params:
+            params["luminance"] = 0.85
+        if preset == "inverted_paper":
+            m = color_matrix.inverted_paper_matrix(**params)
+        else:
+            m = color_matrix.paper_matrix(**params)
+    elif preset in color_matrix.PRESETS:
+        m = color_matrix.preset(preset)
     else:
         m = color_matrix.paper_matrix(
             kelvin=cfg["kelvin"],
@@ -66,37 +78,70 @@ def matrix_for(preset: str, night: bool = False):
             black_floor=cfg["black_floor"],
             white_ceiling=cfg["white_ceiling"],
             contrast=cfg["contrast"],
+            luminance=0.85 if dim else 1.0,
         )
     return m
 
 
 def _lerp_apply(target, on_done=None):
-    """Smoothly transition from current effect to `target` matrix."""
-    try:
-        start = winlib.mag_get_color_effect()
-    except Exception:
-        start = None
-    if start is None:
-        winlib.mag_set_color_effect(target)
+    """Smoothly transition from current effect to `target` matrix.
+
+    Guarded by _transition_lock to prevent concurrent transition interleaving.
+    Runs on the main GUI thread to comply strictly with the Windows Magnification
+    API thread affinity rule (Win32 MagSetFullscreenColorEffect fails on secondary threads).
+    Pumps Windows messages via PeekMessageW on every frame so UI, tray clicks, and hotkeys
+    remain 100% responsive throughout transitions.
+    """
+    with _transition_lock:
+        cfg = config.load()
+        trans_ms = cfg.get("smooth_transition_ms", 1000)
+        trans_sec = max(0.0, trans_ms / 1000.0)
+
+        if trans_sec <= 0.05:
+            winlib.mag_set_color_effect(target)
+            if on_done:
+                on_done()
+            return
+
+        try:
+            start = winlib.mag_get_color_effect()
+        except Exception:
+            start = None
+        if start is None:
+            winlib.mag_set_color_effect(target)
+            if on_done:
+                on_done()
+            return
+        start = tuple(tuple(row) for row in start)
+        steps = max(2, int(trans_sec * TRANSITION_FPS))
+
+        u32 = winlib.user32()
+        msg = wintypes.MSG()
+        pmsg = ctypes.byref(msg)
+
+        for i in range(1, steps + 1):
+            # Dispatch messages during transition so UI and tray never freeze
+            while u32.PeekMessageW(pmsg, 0, 0, 0, 1):
+                if msg.message == 0x0012:  # WM_QUIT
+                    u32.PostQuitMessage(0)
+                    break
+                u32.TranslateMessage(pmsg)
+                u32.DispatchMessageW(pmsg)
+
+            t = color_matrix.ease(i / steps)
+            try:
+                winlib.mag_set_color_effect(color_matrix.lerp_matrix(start, target, t))
+            except Exception as exc:
+                logger.debug(f"Interpolation step failed: {exc}")
+            time.sleep(1.0 / TRANSITION_FPS)
+
+        # ensure exact target
+        try:
+            winlib.mag_set_color_effect(target)
+        except Exception as exc:
+            logger.warn(f"Final target matrix apply failed: {exc}")
         if on_done:
             on_done()
-        return
-    start = tuple(tuple(row) for row in start)
-    steps = max(2, int(TRANSITION_SECONDS * TRANSITION_FPS))
-    for i in range(1, steps + 1):
-        t = color_matrix.ease(i / steps)
-        try:
-            winlib.mag_set_color_effect(color_matrix.lerp_matrix(start, target, t))
-        except Exception as exc:
-            logger.debug(f"Interpolation step failed: {exc}")
-        time.sleep(1.0 / TRANSITION_FPS)
-    # ensure exact target
-    try:
-        winlib.mag_set_color_effect(target)
-    except Exception as exc:
-        logger.warn(f"Final target matrix apply failed: {exc}")
-    if on_done:
-        on_done()
 
 
 class Daemon:
@@ -105,6 +150,8 @@ class Daemon:
         self.current_preset = None
         self.current_night = None
         self.tray_icon: tray.SystemTray | None = None
+        self.last_matrix = None
+        self.session_locked = False
 
     # ---------------- hotkey & menu handling ----------------
 
@@ -144,8 +191,10 @@ class Daemon:
             self.on_hotkey()
 
         elif cmd_id == tray.CMD_HEADER:
-            # Refresh current matrix (called after sleep/resume or display change)
-            p = self.current_preset or "paper"
+            # Refresh current matrix (called after sleep/resume, display change, or settings save)
+            j = signals.load()
+            cfg = config.load()
+            p = j.get("preset") or cfg["preset"]
             _lerp_apply(matrix_for(p, config.is_night()))
 
         elif cmd_id in (
@@ -239,6 +288,36 @@ class Daemon:
             if self.tray_icon:
                 self.tray_icon.show_balloon("PaperScreen Diagnostics", msg)
 
+        elif cmd_id == tray.CMD_SESSION_LOCK:
+            self.session_locked = True
+            logger.info("Workstation locked: resetting display matrix to identity")
+            try:
+                winlib.mag_set_color_effect(color_matrix.identity())
+            except Exception as exc:
+                logger.debug(f"Failed to reset matrix on session lock: {exc}")
+
+        elif cmd_id == tray.CMD_SESSION_UNLOCK:
+            self.session_locked = False
+            logger.info("Workstation unlocked: restoring active paper preset")
+            j = signals.load()
+            if j.get("active", True):
+                cfg = config.load()
+                preset = j.get("preset") or cfg["preset"]
+                night = config.is_night()
+                _lerp_apply(matrix_for(preset, night))
+                self.current_preset, self.current_night = preset, night
+
+        elif cmd_id == tray.CMD_LIVE_PREVIEW:
+            # Live tuning preview from settings GUI dialog
+            j = signals.load()
+            live_m = j.get("preview_matrix")
+            if live_m:
+                try:
+                    winlib.mag_set_color_effect(live_m)
+                    self.last_matrix = live_m
+                except Exception as exc:
+                    logger.debug(f"Live preview matrix apply failed: {exc}")
+
         elif cmd_id == tray.CMD_EXIT:
             _lerp_apply(color_matrix.identity())
             backlight.restore()
@@ -269,14 +348,21 @@ class Daemon:
         j = signals.load()
         preset = j.get("preset") or config.load()["preset"]
         night = config.is_night()
+
+        msg = wintypes.MSG()
+        pmsg = ctypes.byref(msg)
+        last_check = 0.0
+        self.last_matrix = None
         try:
-            winlib.mag_set_color_effect(matrix_for(preset, night))
+            initial_target = matrix_for(preset, night)
+            winlib.mag_set_color_effect(initial_target)
+            self.last_matrix = initial_target
             logger.info(f"Initial matrix applied for preset: {preset}")
         except Exception as exc:
             logger.error(f"Failed initial matrix apply: {exc}")
         self.current_preset, self.current_night = preset, night
         atexit.register(_revert)
-        signals.update(pid=os.getpid(), active=True)
+        signals.update(pid=os.getpid(), active=True, status="ready")
 
         # Initialize System Tray
         self.tray_icon = tray.SystemTray(on_command=self.handle_menu_command)
@@ -304,7 +390,6 @@ class Daemon:
         msg = wintypes.MSG()
         pmsg = ctypes.byref(msg)
         last_check = 0.0
-        last_apply = (preset, night)
 
         try:
             while not self.stop.is_set():
@@ -327,11 +412,22 @@ class Daemon:
                 now = time.time()
                 if now - last_check >= POLL_SECONDS:
                     last_check = now
+
+                    # Skip adjustments while workstation session is locked
+                    if getattr(self, "session_locked", False):
+                        time.sleep(0.04)
+                        continue
+
                     j = signals.load()
                     if j.get("active") is False:
                         logger.info("Deactivation signal received; shutting down daemon.")
                         self.stop.set()
                         break
+
+                    # While settings live preview is being tuned, do not overwrite the matrix
+                    if j.get("preview_matrix") is not None:
+                        time.sleep(0.04)
+                        continue
 
                     cfg = config.load()
                     preset = j.get("preset") or cfg["preset"]
@@ -347,21 +443,22 @@ class Daemon:
                             paused = True
 
                     if paused:
-                        if last_apply != "paused":
+                        if self.last_matrix != "paused":
                             _lerp_apply(color_matrix.identity())
-                            last_apply = "paused"
+                            self.last_matrix = "paused"
                             if self.tray_icon:
                                 self.tray_icon.update_tooltip("PaperScreen - Paused (App Exclusion)", active=False)
                         time.sleep(0.04)
                         continue
-                    elif last_apply == "paused":
-                        last_apply = None
+                    elif self.last_matrix == "paused":
+                        self.last_matrix = None
 
-                    if (preset, night) != last_apply:
-                        target = matrix_for(preset, night)
+                    # Detect if target matrix changed (preset, day/night, or custom config parameters)
+                    target = matrix_for(preset, night)
+                    if target != self.last_matrix:
                         _lerp_apply(target)
                         self.current_preset, self.current_night = preset, night
-                        last_apply = (preset, night)
+                        self.last_matrix = target
                         signals.update(
                             active=True,
                             preset=preset,
@@ -381,7 +478,7 @@ class Daemon:
                 self.tray_icon.remove()
             self.stop.set()
             _revert()
-            signals.update(active=False, pid=None)
+            signals.update(active=False, pid=None, status="stopped")
             if h_mutex:
                 k32.ReleaseMutex(h_mutex)
                 k32.CloseHandle(h_mutex)
@@ -402,6 +499,13 @@ def _unregister_revert(daemon: Daemon) -> None:
         atexit.unregister(_revert)
     except Exception:
         pass
+
+
+__all__ = [
+    "Daemon",
+    "matrix_for",
+    "run",
+]
 
 
 def daemon_main() -> int:

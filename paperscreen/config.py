@@ -138,18 +138,36 @@ def save(cfg: dict) -> str:
 
 
 def is_night(now=None) -> bool:
-    """True if local hour is inside the night window (or outside solar daylight)."""
+    """True if local hour is inside the night window (or outside solar daylight).
+
+    If solar_circadian is enabled, uses astronomical solar times.
+    Otherwise compares against night_start_hour and night_end_hour:
+      - Default window (e.g. 19 to 7) wraps midnight: True when h >= 19 or h < 7.
+      - Non-wrapping window (e.g. 21 to 23): True when 21 <= h < 23.
+    """
     import datetime
     cfg = load()
+    if now is None:
+        now = datetime.datetime.now().astimezone()
     if cfg.get("solar_circadian"):
         try:
             from . import circadian
             return circadian.is_solar_night(now, cfg)
         except Exception:
             pass
-    h = (now or datetime.datetime.now()).hour
+    h = now.hour
     start, end = cfg["night_start_hour"], cfg["night_end_hour"]
     if start <= end:
         return start <= h < end
     return h >= start or h < end
+
+
+__all__ = [
+    "DEFAULTS",
+    "config_dir",
+    "config_path",
+    "load",
+    "save",
+    "is_night",
+]
 

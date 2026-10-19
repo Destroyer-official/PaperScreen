@@ -40,10 +40,11 @@ class MatrixTests(unittest.TestCase):
 
     def test_eink_is_gray(self):
         m = color_matrix.preset("eink")
-        r, g, b = color_matrix.apply_matrix(m, (0.9, 0.3, 0.1))
-        # after full desaturation, warm input maps to same gray for each channel set
-        # check a strong color desaturates: r close to g+b weighted
-        self.assertLess(abs(r - b), 0.15)
+        self.assertTrue(color_matrix.is_achromatic(m), "eink preset must be strictly achromatic")
+        for inp in [(1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0), (0.9, 0.3, 0.1)]:
+            r, g, b = color_matrix.apply_matrix(m, inp)
+            self.assertAlmostEqual(r, g, places=5)
+            self.assertAlmostEqual(g, b, places=5)
 
     def test_presets_differ(self):
         a = color_matrix.preset("paper")
