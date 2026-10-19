@@ -7,8 +7,6 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field, asdict
-from typing import Optional
 
 APP_DIR_NAME = "PaperScreen"
 CONFIG_NAME = "config.json"
