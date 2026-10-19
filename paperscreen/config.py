@@ -14,7 +14,7 @@ APP_DIR_NAME = "PaperScreen"
 CONFIG_NAME = "config.json"
 
 DEFAULTS = {
-    "preset": "paper",            # paper | sepia | eink | eink_warm | warm_reading | nightpaper | inverted_paper | custom | auto | off
+    "preset": "paper",            # paper | sepia | eink | eink_warm | warm_reading | amber_candle | nightpaper | inverted_paper | custom | auto | off
     "kelvin": 4400,
     "desaturation": 0.65,
     "black_floor": 0.10,
@@ -34,6 +34,9 @@ DEFAULTS = {
     "night_dim_matrix": False,      # dim via matrix at night (PWM-safe)
     "auto_pause_fullscreen": False, # temporarily revert matrix when running fullscreen games/videos
     "excluded_apps": [],            # list of .exe names (e.g. ["photoshop.exe", "figma.exe"]) where paper mode pauses
+    "solar_circadian": False,       # calculate true astronomical sunrise/sunset
+    "latitude": None,               # optional GPS latitude (e.g. 40.71)
+    "longitude": None,              # optional GPS longitude (e.g. -74.00)
 }
 
 
@@ -52,7 +55,19 @@ def _validate(cfg: dict) -> dict:
         if k not in DEFAULTS:
             continue  # unknown keys dropped silently (forward compat)
         out[k] = v
-    VALID_PRESETS = ("paper", "sepia", "eink", "warm_reading", "eink_warm", "nightpaper", "inverted_paper", "custom", "auto", "off")
+    VALID_PRESETS = (
+        "paper",
+        "sepia",
+        "eink",
+        "warm_reading",
+        "eink_warm",
+        "amber_candle",
+        "nightpaper",
+        "inverted_paper",
+        "custom",
+        "auto",
+        "off",
+    )
     out["preset"] = str(out["preset"]) if out["preset"] in VALID_PRESETS else "paper"
     out["kelvin"] = min(15000, max(1000, int(out["kelvin"])))
     out["desaturation"] = min(1.0, max(0.0, float(out["desaturation"])))
@@ -77,6 +92,17 @@ def _validate(cfg: dict) -> dict:
         out["excluded_apps"] = [str(a).lower().strip() for a in out["excluded_apps"] if str(a).strip()]
     else:
         out["excluded_apps"] = []
+    out["solar_circadian"] = bool(out.get("solar_circadian", False))
+    if out.get("latitude") is not None:
+        try:
+            out["latitude"] = min(90.0, max(-90.0, float(out["latitude"])))
+        except (ValueError, TypeError):
+            out["latitude"] = None
+    if out.get("longitude") is not None:
+        try:
+            out["longitude"] = min(180.0, max(-180.0, float(out["longitude"])))
+        except (ValueError, TypeError):
+            out["longitude"] = None
     return out
 
 
@@ -114,11 +140,18 @@ def save(cfg: dict) -> str:
 
 
 def is_night(now=None) -> bool:
-    """True if local hour is inside the night window (handles wrap)."""
+    """True if local hour is inside the night window (or outside solar daylight)."""
     import datetime
     cfg = load()
+    if cfg.get("solar_circadian"):
+        try:
+            from . import circadian
+            return circadian.is_solar_night(now, cfg)
+        except Exception:
+            pass
     h = (now or datetime.datetime.now()).hour
     start, end = cfg["night_start_hour"], cfg["night_end_hour"]
     if start <= end:
         return start <= h < end
     return h >= start or h < end
+

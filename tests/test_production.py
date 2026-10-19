@@ -1,6 +1,7 @@
 """Production test suite for PaperScreen: presets, config, logger, signals, Win32 structures."""
 
 import ctypes
+import datetime
 import os
 import tempfile
 import unittest
@@ -39,6 +40,17 @@ class ProductionPresetsTests(unittest.TestCase):
         self.assertLessEqual(wr, 0.95)
 
 
+    def test_amber_candle_preset(self):
+        m = color_matrix.preset("amber_candle")
+        # White should produce rich warm amber (r >> g > b) with heavy blue suppression
+        wr, wg, wb = color_matrix.apply_matrix(m, (1, 1, 1))
+        self.assertGreater(wr, wg)
+        self.assertGreater(wg, wb)
+        self.assertLess(wb, 0.20, "amber candle must heavily quench blue light for circadian protection")
+        # Black should be soft paper floor
+        br, bg, bb = color_matrix.apply_matrix(m, (0, 0, 0))
+        self.assertGreaterEqual(br, 0.05)
+
     def test_inverted_paper_preset(self):
         m = color_matrix.preset("inverted_paper")
         # Inverted: black input (0,0,0) -> warm parchment text (~0.8-0.9)
@@ -52,6 +64,15 @@ class ProductionPresetsTests(unittest.TestCase):
         self.assertLess(br, 0.18, "white input should map to dark charcoal background")
         self.assertLess(bg, 0.18)
         self.assertLess(bb, 0.18)
+
+        # Smart Inversion Hue Preservation: Red input stays red, Blue input stays blue!
+        rr, rg, rb = color_matrix.apply_matrix(m, (1.0, 0.0, 0.0))
+        self.assertGreater(rr, rg, "red input must preserve red dominance")
+        self.assertGreater(rr, rb, "red input must preserve red dominance")
+
+        ur, ug, ub = color_matrix.apply_matrix(m, (0.0, 0.0, 1.0))
+        self.assertGreater(ub, ur, "blue input must preserve blue dominance")
+        self.assertGreater(ub, ug, "blue input must preserve blue dominance")
 
 
 class ConfigValidationTests(unittest.TestCase):
@@ -68,6 +89,16 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(clean["auto_pause_fullscreen"])
         self.assertEqual(clean["excluded_apps"], ["photoshop.exe", "figma.exe"])
 
+    def test_solar_circadian_validation(self):
+        clean = config._validate({
+            "solar_circadian": True,
+            "latitude": 40.71,
+            "longitude": -74.01,
+        })
+        self.assertTrue(clean["solar_circadian"])
+        self.assertAlmostEqual(clean["latitude"], 40.71)
+        self.assertAlmostEqual(clean["longitude"], -74.01)
+
     def test_config_save_load_in_temp_dir(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch.object(config, "config_dir", return_value=tmpdir):
@@ -78,6 +109,30 @@ class ConfigValidationTests(unittest.TestCase):
                 loaded = config.load()
                 self.assertEqual(loaded["preset"], "warm_reading")
                 self.assertEqual(loaded["kelvin"], 3200)
+
+
+class CircadianTests(unittest.TestCase):
+    def test_noaa_solar_calculation_valid(self):
+        from paperscreen import circadian
+        # Test known coordinates (New York City)
+        times = circadian.calculate_solar_times(40.71, -74.01, utc_offset_hours=-4.0)
+        self.assertFalse(times["polar_night"])
+        self.assertFalse(times["polar_day"])
+        self.assertIsNotNone(times["sunrise"])
+        self.assertIsNotNone(times["sunset"])
+        self.assertGreater(times["day_length_hours"], 8.0)
+        self.assertLess(times["day_length_hours"], 16.0)
+
+    def test_solar_is_night_logic(self):
+        from paperscreen import circadian
+        # Midday time (12:00 PM local) should not be night in temperate regions
+        noon = datetime.datetime(2026, 6, 21, 12, 0, 0)
+        # Deep night (2:00 AM local) should definitely be night
+        night = datetime.datetime(2026, 6, 21, 2, 0, 0)
+        
+        cfg = {"latitude": 40.71, "longitude": -74.01}
+        self.assertFalse(circadian.is_solar_night(noon, cfg))
+        self.assertTrue(circadian.is_solar_night(night, cfg))
 
 
 class LoggerTests(unittest.TestCase):
@@ -197,6 +252,14 @@ class CliSubcommandTests(unittest.TestCase):
             rc = cli.main(["toggle"])
             self.assertEqual(rc, 0)
             mock_release.assert_called_once()
+
+    def test_cli_cycle_preset(self):
+        from paperscreen import cli
+        with patch("paperscreen.paper_engine.status", return_value={"engine_active": True, "preset": "paper"}), \
+             patch("paperscreen.signals.update") as mock_update:
+            rc = cli.main(["cycle"])
+            self.assertEqual(rc, 0)
+            mock_update.assert_called_once_with(active=True, preset="sepia")
 
 
 if __name__ == "__main__":

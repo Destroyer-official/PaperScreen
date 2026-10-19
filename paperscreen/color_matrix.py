@@ -159,24 +159,40 @@ def apply_matrix(m, rgb: Tuple[float, float, float]) -> Tuple[float, float, floa
 
 def inverted_paper_matrix(
     kelvin: float = 4600.0,
-    desaturation: float = 0.35,
+    desaturation: float = 0.20,
     black_floor: float = 0.10,
     white_ceiling: float = 0.90,
 ) -> Matrix:
-    """Inverted paper: charcoal background (#1C1A18) with parchment text (#E8DFC8)."""
+    """Smart hue-preserving inverted paper matrix.
+
+    Unlike naive inversion (which flips red into cyan and blue into yellow),
+    this matrix employs cross-channel coupling:
+      [R, G, B] * [[ 1/3, -2/3, -2/3],
+                   [-2/3,  1/3, -2/3],
+                   [-2/3, -2/3,  1/3]] + 1.0
+    This inverts background/foreground luminance while keeping color hues
+    (syntax highlighting, links, diffs) true to their original spectrum,
+    then maps the result onto warm dark charcoal paper (#1A1816) with
+    parchment text (#EAE2D0).
+    """
     d = _clamp(desaturation, 0.0, 1.0)
-    s = 1.0 - d
     wr, wg, wb = LUMA_WEIGHTS["paper"]
     floor = _clamp(black_floor, 0.0, 0.5)
     ceiling = _clamp(white_ceiling, floor + 0.01, 1.0)
     gains = tint_gains(kelvin)
     span = ceiling - floor
 
+    c_diag = 0.3333333
+    c_off = -0.6666667
+    luma_w = (wr, wg, wb)
+
     m = [[0.0] * 5 for _ in range(5)]
-    for out_c in range(3):
-        for in_c in range(3):
-            mix = (s if in_c == out_c else 0.0) + d * (wr, wg, wb)[in_c]
-            m[in_c][out_c] = -gains[out_c] * span * mix
+    for in_c in range(3):
+        for out_c in range(3):
+            smart_w = c_diag if in_c == out_c else c_off
+            mono_w = -luma_w[in_c]
+            w_eff = (1.0 - d) * smart_w + d * mono_w
+            m[in_c][out_c] = gains[out_c] * span * w_eff
 
     for out_c in range(3):
         m[4][out_c] = gains[out_c] * ceiling
@@ -192,8 +208,9 @@ PRESET_VALUES: Dict[str, dict] = {
     "warm_reading": {"kelvin": 3000, "desaturation": 0.55, "black_floor": 0.12, "white_ceiling": 0.84, "contrast": 1.06},
     "eink": {"kelvin": 6500, "desaturation": 1.00, "black_floor": 0.08, "white_ceiling": 0.92, "contrast": 1.04},
     "eink_warm": {"kelvin": 4000, "desaturation": 1.00, "black_floor": 0.08, "white_ceiling": 0.90, "contrast": 1.04},
+    "amber_candle": {"kelvin": 2200, "desaturation": 0.75, "black_floor": 0.08, "white_ceiling": 0.82, "contrast": 1.05},
     "nightpaper": {"kelvin": 3200, "desaturation": 0.60, "black_floor": 0.07, "white_ceiling": 0.72, "contrast": 1.05, "luminance": 0.85},
-    "inverted_paper": {"kelvin": 4400, "desaturation": 0.65, "black_floor": 0.10, "white_ceiling": 0.90},
+    "inverted_paper": {"kelvin": 4400, "desaturation": 0.20, "black_floor": 0.10, "white_ceiling": 0.90},
 }
 
 PRESETS = (
@@ -202,6 +219,7 @@ PRESETS = (
     "eink",
     "warm_reading",
     "eink_warm",
+    "amber_candle",
     "nightpaper",
     "inverted_paper",
     "custom",
@@ -224,6 +242,8 @@ def preset(name: str):
         return paper_matrix(**PRESET_VALUES["warm_reading"])
     if name == "eink_warm":
         return paper_matrix(**PRESET_VALUES["eink_warm"])
+    if name == "amber_candle":
+        return paper_matrix(**PRESET_VALUES["amber_candle"])
     if name == "nightpaper":
         return paper_matrix(**PRESET_VALUES["nightpaper"])
     if name == "inverted_paper":
@@ -239,4 +259,5 @@ def preset(name: str):
             contrast=cfg.get("contrast", 1.04),
         )
     raise ValueError(f"unknown preset: {name!r}")
+
 

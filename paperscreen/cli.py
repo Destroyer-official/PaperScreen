@@ -7,7 +7,7 @@ import json
 import os
 import sys
 
-from . import backlight, breaks, cleartype, color_matrix, config, logger, paper_engine
+from . import backlight, breaks, cleartype, color_matrix, config, logger, paper_engine, signals
 
 
 def _print(obj) -> None:
@@ -20,6 +20,7 @@ ALL_PRESETS = [
     "warm_reading",
     "eink",
     "eink_warm",
+    "amber_candle",
     "nightpaper",
     "inverted_paper",
     "custom",
@@ -54,7 +55,7 @@ def main(argv=None) -> int:
     p_matrix = sub.add_parser("matrix", help="preview a preset matrix")
     p_matrix.add_argument(
         "--preset",
-        choices=["paper", "sepia", "warm_reading", "eink", "eink_warm", "nightpaper", "inverted_paper", "off"],
+        choices=["paper", "sepia", "warm_reading", "eink", "eink_warm", "amber_candle", "nightpaper", "inverted_paper", "off"],
         default="paper",
     )
 
@@ -70,6 +71,8 @@ def main(argv=None) -> int:
     p_cfg.add_argument("--gui", action="store_true", help="open visual preferences GUI")
 
     sub.add_parser("toggle", help="toggle paper mode on/off instantly")
+    sub.add_parser("cycle", help="cycle through paper presets (or Ctrl+Alt+N)")
+    sub.add_parser("next", help="cycle through paper presets (or Ctrl+Alt+N)")
     sub.add_parser("settings", help="open visual preferences & calibration GUI")
 
     p_log = sub.add_parser("log", help="view recent PaperScreen logs")
@@ -82,6 +85,23 @@ def main(argv=None) -> int:
     if args.command == "daemon":
         from . import daemon
         return daemon.daemon_main()
+
+    if args.command in ("cycle", "next"):
+        from . import daemon
+        st = paper_engine.status()
+        if st.get("engine_active"):
+            cur = st.get("preset") or "paper"
+            try:
+                idx = daemon.CYCLE_PRESETS.index(cur)
+                next_preset = daemon.CYCLE_PRESETS[(idx + 1) % len(daemon.CYCLE_PRESETS)]
+            except ValueError:
+                next_preset = daemon.CYCLE_PRESETS[0]
+            signals.update(active=True, preset=next_preset)
+            print(f"PaperScreen cycled to {next_preset.title()}.")
+        else:
+            report = paper_engine.apply()
+            print(f"PaperScreen turned ON (preset: {report.get('preset')}).")
+        return 0
 
     if args.command == "toggle":
         st = paper_engine.status()

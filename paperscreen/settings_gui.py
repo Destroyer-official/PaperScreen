@@ -115,7 +115,7 @@ class SettingsWindow:
         row_preset.pack(fill="x", pady=(0, 10))
         tk.Label(row_preset, text="Active Preset:", font=("Segoe UI", 9, "bold"), bg=self.card_color, fg=self.text_color).pack(side="left")
 
-        presets = ["paper", "sepia", "warm_reading", "eink", "eink_warm", "nightpaper", "inverted_paper", "custom", "auto"]
+        presets = ["paper", "sepia", "warm_reading", "eink", "eink_warm", "amber_candle", "nightpaper", "inverted_paper", "custom", "auto"]
         self.cb_preset = ttk.Combobox(row_preset, textvariable=self.var_preset, values=presets, state="readonly", width=18)
         self.cb_preset.pack(side="right")
         self.cb_preset.bind("<<ComboboxSelected>>", self._on_preset_selected)

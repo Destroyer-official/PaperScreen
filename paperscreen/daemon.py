@@ -37,7 +37,20 @@ MOD_ALT = 0x0001
 MOD_CONTROL = 0x0002
 MOD_NOREPEAT = 0x4000
 VK_P = 0x50
-HOTKEY_ID = 0xB001  # app-private range
+VK_N = 0x4E
+HOTKEY_ID = 0xB001        # Ctrl+Alt+P (Toggle On/Off)
+HOTKEY_CYCLE_ID = 0xB002  # Ctrl+Alt+N (Cycle Preset)
+
+CYCLE_PRESETS = (
+    "paper",
+    "sepia",
+    "warm_reading",
+    "eink",
+    "eink_warm",
+    "amber_candle",
+    "nightpaper",
+    "inverted_paper",
+)
 
 
 def matrix_for(preset: str, night: bool = False):
@@ -106,6 +119,25 @@ class Daemon:
             signals.update(active=True, preset="paper")
             _lerp_apply(matrix_for("paper", config.is_night()))
 
+    def on_cycle_preset(self) -> None:
+        """Cycle to next preset in CYCLE_PRESETS (Ctrl+Alt+N)."""
+        j = signals.load()
+        cur = j.get("preset") or self.current_preset or "paper"
+        try:
+            idx = CYCLE_PRESETS.index(cur)
+            next_preset = CYCLE_PRESETS[(idx + 1) % len(CYCLE_PRESETS)]
+        except ValueError:
+            next_preset = CYCLE_PRESETS[0]
+        signals.update(active=True, preset=next_preset)
+        _lerp_apply(matrix_for(next_preset, config.is_night()))
+        self.current_preset = next_preset
+        title = next_preset.replace("_", " ").title()
+        if self.tray_icon:
+            self.tray_icon.update_tooltip(f"PaperScreen - Active: {title}", active=True)
+            self.tray_icon.show_balloon("PaperScreen Preset", f"Switched to {title}")
+        else:
+            toasts.show("PaperScreen", f"Switched to {title}")
+
     def handle_menu_command(self, cmd_id: int) -> None:
         """Handle context menu selections from the system tray."""
         if cmd_id == tray.CMD_TOGGLE:
@@ -122,6 +154,7 @@ class Daemon:
             tray.CMD_PRESET_WARM_READING,
             tray.CMD_PRESET_EINK,
             tray.CMD_PRESET_EINK_WARM,
+            tray.CMD_PRESET_AMBER_CANDLE,
             tray.CMD_PRESET_NIGHTPAPER,
             tray.CMD_PRESET_INVERTED,
             tray.CMD_PRESET_CUSTOM,
@@ -133,6 +166,7 @@ class Daemon:
                 tray.CMD_PRESET_WARM_READING: "warm_reading",
                 tray.CMD_PRESET_EINK: "eink",
                 tray.CMD_PRESET_EINK_WARM: "eink_warm",
+                tray.CMD_PRESET_AMBER_CANDLE: "amber_candle",
                 tray.CMD_PRESET_NIGHTPAPER: "nightpaper",
                 tray.CMD_PRESET_INVERTED: "inverted_paper",
                 tray.CMD_PRESET_CUSTOM: "custom",
@@ -254,10 +288,16 @@ class Daemon:
 
         # RegisterHotKey (optional; ignore failure)
         hotkey_ok = False
+        cycle_hotkey_ok = False
         if config.load().get("hotkey_toggle", True):
             hotkey_ok = bool(
                 winlib.user32().RegisterHotKey(
                     None, HOTKEY_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_P
+                )
+            )
+            cycle_hotkey_ok = bool(
+                winlib.user32().RegisterHotKey(
+                    None, HOTKEY_CYCLE_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_N
                 )
             )
 
@@ -273,8 +313,11 @@ class Daemon:
                         logger.info("Daemon received WM_QUIT; exiting loop")
                         self.stop.set()
                         break
-                    if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
-                        self.on_hotkey()
+                    if msg.message == WM_HOTKEY:
+                        if msg.wParam == HOTKEY_ID:
+                            self.on_hotkey()
+                        elif msg.wParam == HOTKEY_CYCLE_ID:
+                            self.on_cycle_preset()
                     winlib.user32().TranslateMessage(pmsg)
                     winlib.user32().DispatchMessageW(pmsg)
 
@@ -332,6 +375,8 @@ class Daemon:
             logger.info(f"Daemon process {os.getpid()} entering finally cleanup block")
             if hotkey_ok:
                 winlib.user32().UnregisterHotKey(None, HOTKEY_ID)
+            if cycle_hotkey_ok:
+                winlib.user32().UnregisterHotKey(None, HOTKEY_CYCLE_ID)
             if self.tray_icon:
                 self.tray_icon.remove()
             self.stop.set()

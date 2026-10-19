@@ -36,10 +36,11 @@ Standard computer monitors are emissive light sources blasting up to 400 cd/m² 
 | `warm_reading` | 3000 K | 55% | 0.12 | 0.84 | Long PDF & textbook study under dim amber lighting |
 | `eink` | 6500 K | 100% | 0.08 | 0.92 | High-contrast ReMarkable/Boox neutral monochrome |
 | `eink_warm` | 4000 K | 100% | 0.08 | 0.90 | Kindle Paperwhite warm amber light emulation |
+| `amber_candle` | 2200 K | 75% | 0.08 | 0.82 | Daylight Computer Sol:OS pure amber reading (>95% blue suppression) |
 | `nightpaper` | 3200 K | 60% | 0.07 | 0.72 | Late night deep work (PWM-safe matrix dimming) |
-| `inverted_paper` | 4400 K | 65% | 0.10 | 0.90 | Dark-mode paper (parchment text on soft charcoal) |
+| `inverted_paper` | 4400 K | 20% | 0.10 | 0.90 | Smart Dark Paper: hue-preserving cross-matrix (syntax highlighting intact) |
 | `custom` | Dynamic | Dynamic | Dynamic | Dynamic | Real-time live slider calibration via GUI (`--gui`) |
-| `auto` | Dynamic | Dynamic | Dynamic | Dynamic | Automated circadian day ↔ night sync |
+| `auto` | Dynamic | Dynamic | Dynamic | Dynamic | Automated circadian day ↔ night sync (standard or NOAA solar) |
 
 ---
 
@@ -69,15 +70,16 @@ python -m paperscreen on
 
 ## 🖥️ Usage & Desktop Integration
 
-### 1. Global Hotkey
-Press **`Ctrl + Alt + P`** anywhere on Windows to toggle Paper Mode instantly.
+### 1. Global Hotkeys
+- **`Ctrl + Alt + P`**: Toggle Paper Mode instantly on / off.
+- **`Ctrl + Alt + N`**: Cycle through paper presets on the fly (`Paper` ➔ `Sepia` ➔ `Warm Reading` ➔ `E-Ink` ➔ `Kindle Warm` ➔ `Amber Candle` ➔ `Night Paper` ➔ `Smart Dark Paper`).
 
 ### 2. Native System Tray Icon
 When active, PaperScreen sits quietly in your taskbar notification area with a custom parchment paper icon:
 - **Left Click**: Open context menu
 - **Double Click**: Toggle Paper Mode on/off
 - **Right Click**: 
-  - Switch Presets (`Paper`, `Sepia`, `Warm Reading`, `E-Ink`, etc.)
+  - Switch Presets (`Paper`, `Sepia`, `Amber Candle`, `Smart Dark Paper`, etc.)
   - Set Hardware Backlight (`25%`, `40%`, `60%`, `75%`, `100%`)
   - 20-20-20 Break Timer (Toggle, "Take Break Now")
   - Toggle Grayscale Font Smoothing
@@ -98,10 +100,14 @@ python -m paperscreen config --gui
 ```powershell
 # Core Controls
 python -m paperscreen on                      # Activate paper mode (spawns daemon + tray)
-python -m paperscreen on --preset sepia       # Activate with a specific preset
+python -m paperscreen on --preset amber_candle # Activate with Daylight 2200K amber preset
+python -m paperscreen cycle                   # Cycle to next paper preset (or Ctrl+Alt+N)
 python -m paperscreen off                     # Restore normal display and exit
 python -m paperscreen toggle                  # Instant one-touch toggle (script / macro friendly)
 python -m paperscreen status                  # Show current active engine status
+
+# NOAA Astronomical Solar Circadian Sync
+python -m paperscreen config --set solar_circadian=true # Auto-switch using true solar sunrise/sunset
 
 # Hardware & Diagnostics
 python -m paperscreen doctor                  # Full system diagnostic (APIs, DDC, HDR)
@@ -134,9 +140,9 @@ python -m paperscreen config --set kelvin=4800 --set backlight_day=55
 PaperScreen includes a comprehensive test suite covering matrix math, blackbody physics, Win32 memory alignments, and backlight logic:
 
 ```powershell
-python -m unittest discover -s tests -v
+python -m pytest tests/ -v
 ```
-*Current test suite: 41 tests, 100% pass rate.*
+*Current test suite: 46 tests, 100% pass rate.*
 
 ---
 
