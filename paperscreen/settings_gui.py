@@ -62,7 +62,7 @@ class SettingsWindow:
 
         self.var_live_preview = tk.BooleanVar(value=True)
         self._user_adjusting = True
-        self._slider_labels = {}
+        self._slider_labels = []
 
     def _build_ui(self):
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -152,7 +152,7 @@ class SettingsWindow:
         self._apply_live_preview()
 
     def _update_all_slider_labels(self):
-        for var, (lbl, res, unit) in self._slider_labels.items():
+        for var, lbl, res, unit in self._slider_labels:
             val = var.get()
             formatted = f"{float(val):.2f}" if isinstance(res, float) else f"{int(float(val))}"
             lbl.config(text=f"{formatted}{unit}")
@@ -208,7 +208,7 @@ class SettingsWindow:
         
         lbl_val = tk.Label(header, text=f"{var.get()}{unit}", font=("Segoe UI", 9, "bold"), bg=self.card_color, fg=self.accent_color)
         lbl_val.pack(side="right")
-        self._slider_labels[var] = (lbl_val, resolution, unit)
+        self._slider_labels.append((var, lbl_val, resolution, unit))
 
         def _on_move(val):
             formatted = f"{float(val):.2f}" if isinstance(resolution, float) else f"{int(float(val))}"
