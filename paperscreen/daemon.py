@@ -249,6 +249,10 @@ class Daemon:
                 pass
             cli.autostart(enable=not is_auto, disable=is_auto)
 
+        elif cmd_id == tray.CMD_SETTINGS:
+            from . import settings_gui
+            threading.Thread(target=settings_gui.open_settings_gui, daemon=True).start()
+
         elif cmd_id == tray.CMD_DOCTOR:
             hdr_info = winlib.get_advanced_color_info()
             hdr_str = "HDR enabled" if any(h.get("hdr_enabled") for h in hdr_info) else "SDR (normal)"

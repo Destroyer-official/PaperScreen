@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [1.0.1] - 2026-10-19
+
+### Added
+- **Visual Preferences & Calibration GUI (`settings_gui.py`)**: Zero-dependency Tkinter dialog for fine-tuning Kelvin, desaturation, black floor, white ceiling, contrast, circadian backlight targets, 20-20-20 breaks, and excluded apps with live instant preview.
+- **CLI `toggle` Subcommand**: Added `paperscreen toggle` to flip the paper display state on or off instantly from scripts, Stream Decks, or hotkey daemons.
+- **CLI `settings` Subcommand & Flag**: Added `paperscreen settings` and `paperscreen config --gui` to launch the preferences GUI directly.
+- **Expanded Test Coverage**: Extended production unit test suite to 41 comprehensive tests with 100% pass rate.
+
+### Fixed
+- **Win32 GUID & LRESULT Types**: Implemented explicit ctypes `GUID` and pointer-sized `LRESULT` structures in `tray.py` to ensure reliable compatibility across all Python 3.10+ Windows runtimes.
+- **System Tray Preferences Hook**: Added direct "Preferences & Settings..." menu item to the system tray context menu.
+
+---
+
 ## [1.0.0] - 2026-10-19
 
 ### Added

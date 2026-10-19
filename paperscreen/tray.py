@@ -82,10 +82,21 @@ CMD_BREAK_NOW = 1041
 CMD_SMOOTHING_TOGGLE = 1050
 CMD_AUTOSTART_TOGGLE = 1051
 CMD_DOCTOR = 1052
+CMD_SETTINGS = 1060
 CMD_EXIT = 1099
 
 
-# Win32 Structures
+LRESULT = ctypes.c_ssize_t
+
+class GUID(ctypes.Structure):
+    _fields_ = [
+        ("Data1", wintypes.DWORD),
+        ("Data2", wintypes.WORD),
+        ("Data3", wintypes.WORD),
+        ("Data4", ctypes.c_byte * 8),
+    ]
+
+
 class NOTIFYICONDATAW(ctypes.Structure):
     _fields_ = [
         ("cbSize", wintypes.DWORD),
@@ -101,7 +112,7 @@ class NOTIFYICONDATAW(ctypes.Structure):
         ("uTimeout", wintypes.UINT),
         ("szInfoTitle", wintypes.WCHAR * 64),
         ("dwInfoFlags", wintypes.DWORD),
-        ("guidItem", wintypes.GUID),
+        ("guidItem", GUID),
         ("hBalloonIcon", wintypes.HICON),
     ]
 
@@ -245,7 +256,7 @@ class SystemTray:
         h_inst = k32.GetModuleHandleW(None)
 
         WNDPROC = ctypes.WINFUNCTYPE(
-            wintypes.LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
+            LRESULT, wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM
         )
 
         def _wnd_proc(hwnd, msg, wparam, lparam):
@@ -408,7 +419,8 @@ class SystemTray:
             pass
         u32.AppendMenuW(h_menu, MF_STRING | (MF_CHECKED if is_auto else 0), CMD_AUTOSTART_TOGGLE, "Start with Windows")
 
-        # Diagnostics & Exit
+        # Preferences, Diagnostics & Exit
+        u32.AppendMenuW(h_menu, MF_STRING, CMD_SETTINGS, "Preferences & Settings...")
         u32.AppendMenuW(h_menu, MF_STRING, CMD_DOCTOR, "Diagnostics (Doctor)...")
         u32.AppendMenuW(h_menu, MF_SEPARATOR, 0, None)
         u32.AppendMenuW(h_menu, MF_STRING, CMD_EXIT, "Exit PaperScreen")

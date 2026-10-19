@@ -167,5 +167,39 @@ class BacklightLogicTests(unittest.TestCase):
             self.assertIn("method", m)
 
 
+class TrayStructureTests(unittest.TestCase):
+    def test_guid_structure(self):
+        from paperscreen import tray
+        g = tray.GUID()
+        self.assertEqual(ctypes.sizeof(g), 16)
+
+    def test_notifyicondata_structure(self):
+        from paperscreen import tray
+        nid = tray.NOTIFYICONDATAW()
+        nid.cbSize = ctypes.sizeof(tray.NOTIFYICONDATAW)
+        self.assertEqual(nid.cbSize, ctypes.sizeof(tray.NOTIFYICONDATAW))
+        self.assertGreaterEqual(nid.cbSize, 500)
+
+
+class CliSubcommandTests(unittest.TestCase):
+    def test_cli_toggle_dispatches(self):
+        from paperscreen import cli
+        with patch("paperscreen.paper_engine.status", return_value={"engine_active": False}), \
+             patch("paperscreen.paper_engine.apply", return_value={"preset": "paper"}) as mock_apply:
+            rc = cli.main(["toggle"])
+            self.assertEqual(rc, 0)
+            mock_apply.assert_called_once()
+
+    def test_cli_toggle_when_active(self):
+        from paperscreen import cli
+        with patch("paperscreen.paper_engine.status", return_value={"engine_active": True}), \
+             patch("paperscreen.paper_engine.release", return_value={}) as mock_release:
+            rc = cli.main(["toggle"])
+            self.assertEqual(rc, 0)
+            mock_release.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
+
+

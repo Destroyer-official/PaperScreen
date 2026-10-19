@@ -66,6 +66,10 @@ def main(argv=None) -> int:
         "--set", action="append", default=None, metavar="KEY=VALUE",
         help="set config key (repeatable), then show config",
     )
+    p_cfg.add_argument("--gui", action="store_true", help="open visual preferences GUI")
+
+    sub.add_parser("toggle", help="toggle paper mode on/off instantly")
+    sub.add_parser("settings", help="open visual preferences & calibration GUI")
 
     p_log = sub.add_parser("log", help="view recent PaperScreen logs")
     p_log.add_argument("-n", "--lines", type=int, default=30, help="number of lines to show")
@@ -77,6 +81,20 @@ def main(argv=None) -> int:
     if args.command == "daemon":
         from . import daemon
         return daemon.daemon_main()
+
+    if args.command == "toggle":
+        st = paper_engine.status()
+        if st.get("engine_active"):
+            report = paper_engine.release()
+            print("PaperScreen turned OFF.")
+        else:
+            report = paper_engine.apply()
+            print(f"PaperScreen turned ON (preset: {report.get('preset')}).")
+        return 0
+
+    if args.command == "settings":
+        from . import settings_gui
+        return settings_gui.open_settings_gui()
 
     if args.command == "on":
         report = paper_engine.apply(preset=args.preset, set_backlight=not args.no_backlight)
@@ -96,6 +114,9 @@ def main(argv=None) -> int:
         return 0
 
     if args.command == "config":
+        if getattr(args, "gui", False):
+            from . import settings_gui
+            return settings_gui.open_settings_gui()
         if args.set:
             cfg = config.load()
             for pair in args.set:

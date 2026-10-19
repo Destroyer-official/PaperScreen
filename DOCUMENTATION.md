@@ -24,6 +24,7 @@ paperscreen/
 ├── breaks.py               20-20-20 micro-break watchdog with idle tracking
 ├── toasts.py               Windows notification dispatcher (Balloon / WinRT)
 ├── tray.py                 Zero-dependency Win32 system tray & context menu
+├── settings_gui.py         Native Tkinter display preferences & calibration GUI
 ├── spawn.py                Detached console-free process launcher
 ├── daemon.py               Resident background daemon holding the magnification effect
 └── autostart_helper.py     Login launcher for Windows HKCU Run entry

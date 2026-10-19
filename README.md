@@ -80,16 +80,26 @@ When active, PaperScreen sits quietly in your taskbar notification area with a c
   - Set Hardware Backlight (`25%`, `40%`, `60%`, `75%`, `100%`)
   - 20-20-20 Break Timer (Toggle, "Take Break Now")
   - Toggle Grayscale Font Smoothing
+  - Open Visual Preferences & Calibration Dialog
   - Toggle "Start with Windows"
   - View Live Diagnostics (`Doctor`)
 
-### 3. CLI Command Reference
+### 3. Visual Preferences & Calibration GUI
+Fine-tune color temperature, desaturation, contrast, and black/white luminance limits with zero external dependencies:
+```powershell
+python -m paperscreen settings
+# Or
+python -m paperscreen config --gui
+```
+
+### 4. CLI Command Reference
 
 ```powershell
 # Core Controls
 python -m paperscreen on                      # Activate paper mode (spawns daemon + tray)
 python -m paperscreen on --preset sepia       # Activate with a specific preset
 python -m paperscreen off                     # Restore normal display and exit
+python -m paperscreen toggle                  # Instant one-touch toggle (script / macro friendly)
 python -m paperscreen status                  # Show current active engine status
 
 # Hardware & Diagnostics
@@ -98,7 +108,8 @@ python -m paperscreen monitors                # List connected monitors and brig
 python -m paperscreen matrix --preset paper   # Inspect 5x5 color transform matrix
 python -m paperscreen log                     # View recent diagnostic log entries
 
-# Break Reminders & Automation
+# Break Reminders, GUI & Automation
+python -m paperscreen settings                # Launch visual calibration GUI
 python -m paperscreen break --detached        # Run 20-20-20 break timer in background
 python -m paperscreen autostart --enable      # Automatically start PaperScreen at login
 python -m paperscreen config --set kelvin=4800 --set backlight_day=55
@@ -124,7 +135,7 @@ PaperScreen includes a comprehensive test suite covering matrix math, blackbody 
 ```powershell
 python -m unittest discover -s tests -v
 ```
-*Current test suite: 37 tests, 100% pass rate.*
+*Current test suite: 41 tests, 100% pass rate.*
 
 ---
 
