@@ -1,0 +1,359 @@
+"""Resident daemon: holds the magnification color effect while paper mode is on.
+
+The Windows full-screen magnifier color transform is session-bound: it is
+cleared when the applying process exits (verified empirically). So a
+detached resident process must keep running while paper mode is active.
+
+Features:
+- Pure-Win32 zero-dependency System Tray Icon & Desktop Context Menu.
+- Smooth eased matrix transitions (~1 s, 30 fps stepping — no flicker).
+- Night schedule: auto-switches between day/night matrices at configured hours.
+- Global hotkey toggle (RegisterHotKey, default Ctrl+Alt+P).
+- Journal-driven: exits and reverts when `active` goes false.
+- Hard kill also clears the effect automatically (session teardown).
+- Survives Windows Explorer restarts (TaskbarCreated message).
+- Re-applies matrix on system wake from sleep/hibernate (WM_POWERBROADCAST).
+"""
+
+from __future__ import annotations
+
+import atexit
+import ctypes
+import datetime
+import os
+import sys
+import threading
+import time
+from ctypes import wintypes
+
+from . import backlight, cleartype, color_matrix, config, logger, signals, toasts, tray, winlib
+
+POLL_SECONDS = 0.5
+TRANSITION_SECONDS = 1.0
+TRANSITION_FPS = 30
+
+WM_HOTKEY = 0x0312
+MOD_ALT = 0x0001
+MOD_CONTROL = 0x0002
+MOD_NOREPEAT = 0x4000
+VK_P = 0x50
+HOTKEY_ID = 0xB001  # app-private range
+
+
+def matrix_for(preset: str, night: bool = False):
+    cfg = config.load()
+    if preset in color_matrix.PRESETS:
+        m = color_matrix.preset(preset)
+    elif preset == "auto":
+        m = color_matrix.preset("nightpaper" if night else "paper")
+    else:
+        m = color_matrix.paper_matrix(
+            kelvin=cfg["kelvin"],
+            desaturation=cfg["desaturation"],
+            black_floor=cfg["black_floor"],
+            white_ceiling=cfg["white_ceiling"],
+            contrast=cfg["contrast"],
+        )
+    return m
+
+
+def _lerp_apply(target, on_done=None):
+    """Smoothly transition from current effect to `target` matrix."""
+    try:
+        start = winlib.mag_get_color_effect()
+    except Exception:
+        start = None
+    if start is None:
+        winlib.mag_set_color_effect(target)
+        if on_done:
+            on_done()
+        return
+    start = tuple(tuple(row) for row in start)
+    steps = max(2, int(TRANSITION_SECONDS * TRANSITION_FPS))
+    for i in range(1, steps + 1):
+        t = color_matrix.ease(i / steps)
+        try:
+            winlib.mag_set_color_effect(color_matrix.lerp_matrix(start, target, t))
+        except Exception as exc:
+            logger.debug(f"Interpolation step failed: {exc}")
+        time.sleep(1.0 / TRANSITION_FPS)
+    # ensure exact target
+    try:
+        winlib.mag_set_color_effect(target)
+    except Exception as exc:
+        logger.warn(f"Final target matrix apply failed: {exc}")
+    if on_done:
+        on_done()
+
+
+class Daemon:
+    def __init__(self):
+        self.stop = threading.Event()
+        self.apply_lock = threading.Lock()
+        self.current_preset = None
+        self.current_night = None
+        self.tray_icon: tray.SystemTray | None = None
+
+    # ---------------- worker: journal + schedule ----------------
+
+    def worker(self) -> None:
+        last_apply = None
+        while not self.stop.is_set():
+            j = signals.load()
+            if not j.get("active"):
+                self.stop.set()
+                return
+            if j.get("pid") not in (None, os.getpid()):
+                # superseded: the newer daemon owns the effect now
+                self.stop.set()
+                _unregister_revert(self)
+                return
+            cfg = config.load()
+            preset = j.get("preset") or cfg["preset"]
+            night = config.is_night()
+
+            # Auto-pause for fullscreen apps or excluded processes
+            paused = False
+            if cfg.get("auto_pause_fullscreen", False) and winlib.is_foreground_fullscreen():
+                paused = True
+            elif cfg.get("excluded_apps"):
+                fg_proc = winlib.get_foreground_process_name()
+                if fg_proc and fg_proc in cfg["excluded_apps"]:
+                    paused = True
+
+            if paused:
+                if last_apply != "paused":
+                    with self.apply_lock:
+                        _lerp_apply(color_matrix.identity())
+                    last_apply = "paused"
+                    if self.tray_icon:
+                        self.tray_icon.update_tooltip("PaperScreen - Paused (App Exclusion)", active=False)
+                time.sleep(POLL_SECONDS)
+                continue
+
+            if (preset, night) != last_apply:
+                target = matrix_for(preset, night)
+                with self.apply_lock:
+                    _lerp_apply(target)
+                self.current_preset, self.current_night = preset, night
+                last_apply = (preset, night)
+                signals.update(
+                    active=True,
+                    preset=preset,
+                    applied_at=datetime.datetime.now().isoformat(timespec="seconds"),
+                )
+                if self.tray_icon:
+                    self.tray_icon.update_tooltip(f"PaperScreen - Active: {preset.title()}", active=True)
+            time.sleep(POLL_SECONDS)
+
+    # ---------------- hotkey & menu handling ----------------
+
+    def on_hotkey(self) -> None:
+        j = signals.load()
+        if j.get("active"):
+            # toggling OFF: revert matrix, flag journal off, exit
+            with self.apply_lock:
+                _lerp_apply(color_matrix.identity())
+            signals.update(active=False, pid=None)
+            self.stop.set()
+        else:
+            signals.update(active=True, preset="paper")
+            with self.apply_lock:
+                _lerp_apply(matrix_for("paper", config.is_night()))
+
+    def handle_menu_command(self, cmd_id: int) -> None:
+        """Handle context menu selections from the system tray."""
+        if cmd_id == tray.CMD_TOGGLE:
+            self.on_hotkey()
+
+        elif cmd_id == tray.CMD_HEADER:
+            # Refresh current matrix (called after sleep/resume or display change)
+            with self.apply_lock:
+                p = self.current_preset or "paper"
+                _lerp_apply(matrix_for(p, config.is_night()))
+
+        elif cmd_id in (
+            tray.CMD_PRESET_PAPER,
+            tray.CMD_PRESET_SEPIA,
+            tray.CMD_PRESET_WARM_READING,
+            tray.CMD_PRESET_EINK,
+            tray.CMD_PRESET_EINK_WARM,
+            tray.CMD_PRESET_NIGHTPAPER,
+            tray.CMD_PRESET_INVERTED,
+            tray.CMD_PRESET_AUTO,
+        ):
+            mapping = {
+                tray.CMD_PRESET_PAPER: "paper",
+                tray.CMD_PRESET_SEPIA: "sepia",
+                tray.CMD_PRESET_WARM_READING: "warm_reading",
+                tray.CMD_PRESET_EINK: "eink",
+                tray.CMD_PRESET_EINK_WARM: "eink_warm",
+                tray.CMD_PRESET_NIGHTPAPER: "nightpaper",
+                tray.CMD_PRESET_INVERTED: "inverted_paper",
+                tray.CMD_PRESET_AUTO: "auto",
+            }
+            new_preset = mapping[cmd_id]
+            signals.update(active=True, preset=new_preset)
+            with self.apply_lock:
+                _lerp_apply(matrix_for(new_preset, config.is_night()))
+            self.current_preset = new_preset
+            if self.tray_icon:
+                self.tray_icon.update_tooltip(f"PaperScreen - Active: {new_preset.title()}", active=True)
+
+        elif cmd_id in (
+            tray.CMD_BRI_100,
+            tray.CMD_BRI_75,
+            tray.CMD_BRI_60,
+            tray.CMD_BRI_40,
+            tray.CMD_BRI_25,
+        ):
+            bri_map = {
+                tray.CMD_BRI_100: 100,
+                tray.CMD_BRI_75: 75,
+                tray.CMD_BRI_60: 60,
+                tray.CMD_BRI_40: 40,
+                tray.CMD_BRI_25: 25,
+            }
+            backlight.set_brightness(bri_map[cmd_id])
+
+        elif cmd_id == tray.CMD_BREAK_TOGGLE:
+            cfg = config.load()
+            cfg["breaks_enabled"] = not cfg.get("breaks_enabled", True)
+            config.save(cfg)
+            if self.tray_icon:
+                st = "enabled" if cfg["breaks_enabled"] else "disabled"
+                self.tray_icon.show_balloon("PaperScreen Breaks", f"20-20-20 break reminders {st}.")
+
+        elif cmd_id == tray.CMD_BREAK_NOW:
+            toasts.show("PaperScreen Break", "Look at something ~6 m (20 ft) away for 20 seconds.", reminder=True)
+
+        elif cmd_id == tray.CMD_SMOOTHING_TOGGLE:
+            cfg = config.load()
+            new_val = not cfg.get("grayscale_smoothing", False)
+            cfg["grayscale_smoothing"] = new_val
+            config.save(cfg)
+            if new_val:
+                cleartype.enable_grayscale_smoothing()
+            else:
+                cleartype.restore_previous()
+
+        elif cmd_id == tray.CMD_AUTOSTART_TOGGLE:
+            from . import cli
+            is_auto = False
+            try:
+                import winreg
+                with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\Windows\CurrentVersion\Run") as k:
+                    winreg.QueryValueEx(k, "PaperScreen")
+                    is_auto = True
+            except OSError:
+                pass
+            cli.autostart(enable=not is_auto, disable=is_auto)
+
+        elif cmd_id == tray.CMD_DOCTOR:
+            hdr_info = winlib.get_advanced_color_info()
+            hdr_str = "HDR enabled" if any(h.get("hdr_enabled") for h in hdr_info) else "SDR (normal)"
+            msg = f"Mode: {self.current_preset or 'paper'}\nDisplay: {hdr_str}\nStatus: Optimal"
+            if self.tray_icon:
+                self.tray_icon.show_balloon("PaperScreen Diagnostics", msg)
+
+        elif cmd_id == tray.CMD_EXIT:
+            with self.apply_lock:
+                _lerp_apply(color_matrix.identity())
+            backlight.restore()
+            cleartype.restore_previous()
+            signals.update(active=False, pid=None)
+            self.stop.set()
+
+    # ---------------- lifecycle ----------------
+
+    def run(self) -> int:
+        # OS-level single instance check
+        k32 = ctypes.windll.kernel32
+        DAEMON_MUTEX_NAME = "Local\\PaperScreenDaemonSingleInstanceMutex"
+        h_mutex = k32.CreateMutexW(None, True, DAEMON_MUTEX_NAME)
+        ERROR_ALREADY_EXISTS = 183
+        if k32.GetLastError() == ERROR_ALREADY_EXISTS:
+            logger.info("Another PaperScreen daemon instance is already running; exiting redundant instance.")
+            if h_mutex:
+                k32.CloseHandle(h_mutex)
+            return 0
+
+        j = signals.load()
+        preset = j.get("preset") or config.load()["preset"]
+        night = config.is_night()
+        try:
+            winlib.mag_set_color_effect(matrix_for(preset, night))
+        except Exception as exc:
+            logger.error(f"Failed initial matrix apply: {exc}")
+        self.current_preset, self.current_night = preset, night
+        atexit.register(_revert)
+        signals.update(pid=os.getpid(), active=True)
+
+        # Initialize System Tray
+        self.tray_icon = tray.SystemTray(on_command=self.handle_menu_command)
+        self.tray_icon.create()
+
+        t = threading.Thread(target=self.worker, daemon=True)
+        t.start()
+
+        # RegisterHotKey (optional; ignore failure)
+        hotkey_ok = False
+        if config.load().get("hotkey_toggle", True):
+            hotkey_ok = bool(
+                winlib.user32().RegisterHotKey(
+                    None, HOTKEY_ID, MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, VK_P
+                )
+            )
+
+        msg = wintypes.MSG()
+        pmsg = ctypes.byref(msg)
+        try:
+            while not self.stop.is_set():
+                # PeekMessage with PM_REMOVE(1) handles tray messages, hotkeys, and menu commands
+                while winlib.user32().PeekMessageW(pmsg, 0, 0, 0, 1):
+                    if msg.message == WM_HOTKEY and msg.wParam == HOTKEY_ID:
+                        self.on_hotkey()
+                    winlib.user32().TranslateMessage(pmsg)
+                    winlib.user32().DispatchMessageW(pmsg)
+                time.sleep(0.04)
+        finally:
+            if hotkey_ok:
+                winlib.user32().UnregisterHotKey(None, HOTKEY_ID)
+            if self.tray_icon:
+                self.tray_icon.remove()
+            self.stop.set()
+            t.join(timeout=2)
+            signals.update(active=False, pid=None)
+            if h_mutex:
+                k32.ReleaseMutex(h_mutex)
+                k32.CloseHandle(h_mutex)
+        return 0
+
+
+def _revert() -> None:
+    try:
+        winlib.mag_set_color_effect(color_matrix.identity())
+    except Exception as exc:
+        logger.debug(f"Revert error: {exc}")
+
+
+def _unregister_revert(daemon: Daemon) -> None:
+    """Superseded daemon: do NOT revert (the new owner keeps the effect)."""
+    try:
+        atexit.unregister(_revert)
+    except Exception:
+        pass
+
+
+def daemon_main() -> int:
+    d = Daemon()
+    try:
+        return d.run()
+    except KeyboardInterrupt:
+        d.stop.set()
+        _revert()
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(daemon_main())
