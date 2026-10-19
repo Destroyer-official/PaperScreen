@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paperscreen"
-version = "1.0.0"
+version = "1.0.2"
 description = "Make your Windows monitor behave like paper for long coding/reading sessions."
 readme = "README.md"
 requires-python = ">=3.10"
