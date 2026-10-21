@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paperscreen"
-version = "1.0.3"
-description = "Make your Windows monitor behave like paper for long coding/reading sessions."
+version = "1.0.4"
+description = "Hardware-grade paper-like display engine for Windows with session-bound color matrices and DDC/CI control."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
@@ -24,7 +24,7 @@ keywords = [
     "20-20-20",
 ]
 classifiers = [
-    "Development Status :: 5 - Production/Stable",
+    "Development Status :: 4 - Beta",
     "Environment :: Win32 (MS Windows)",
     "Intended Audience :: End Users/Desktop",
     "Intended Audience :: Developers",
@@ -49,8 +49,8 @@ paperscreen = "paperscreen.cli:main"
 paperscreen-tray = "paperscreen.daemon:daemon_main"
 
 [project.urls]
-Homepage = "https://github.com/paperscreen/paperscreen"
-Documentation = "https://github.com/paperscreen/paperscreen#readme"
+Homepage = "https://github.com/Destroyer-official/PaperScreen"
+Documentation = "https://github.com/Destroyer-official/PaperScreen#readme"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]

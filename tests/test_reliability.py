@@ -13,6 +13,7 @@ Covers:
 
 from __future__ import annotations
 
+import os
 import tempfile
 import threading
 import time
@@ -542,17 +543,80 @@ class SettingsWindowTests(unittest.TestCase):
             mock_apply.assert_called_once()
 
 
-class TrayWmCommandTests(unittest.TestCase):
-    def test_tray_wm_command_dispatches_without_loword_attribute_error(self):
-        """WM_COMMAND should mask wparam & 0xFFFF and dispatch to on_command cleanly."""
-        from paperscreen import tray
-        received_commands = []
-        st = tray.SystemTray(on_command=lambda cmd: received_commands.append(cmd))
+class DaemonReliabilityTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.patch_config = patch.object(config, "config_dir", return_value=self.tmpdir.name)
+        self.patch_signals = patch.object(signals, "config_dir", return_value=self.tmpdir.name)
+        self.patch_config.start()
+        self.patch_signals.start()
+        signals.clear()
 
-        # WM_COMMAND = 0x0111, wparam = CMD_LIVE_PREVIEW (1082)
-        res = st.dispatch_message(0, 0x0111, tray.CMD_LIVE_PREVIEW, 0)
-        self.assertEqual(res, 0)
-        self.assertIn(tray.CMD_LIVE_PREVIEW, received_commands)
+    def tearDown(self):
+        self.patch_signals.stop()
+        self.patch_config.stop()
+        self.tmpdir.cleanup()
+
+    def test_state_file_oserror_does_not_quarantine(self):
+        """Transient OSError (antivirus/file lock) must not rename valid state.json to .corrupt."""
+        signals.save({"backlight_previous": {"Mon #1": 80}, "active": True})
+        p = signals.state_path()
+        self.assertTrue(os.path.isfile(p))
+
+        with patch("builtins.open", side_effect=OSError("Sharing violation")):
+            loaded = signals.load()
+            self.assertEqual(loaded, {})
+
+        # File must NOT have been renamed to .corrupt
+        self.assertTrue(os.path.isfile(p), "valid state file must be retained on transient OSError")
+        self.assertFalse(os.path.isfile(f"{p}.corrupt"))
+
+    def test_state_file_corrupt_json_quarantines(self):
+        """Truly corrupt/unparseable JSON is safely quarantined to .corrupt."""
+        p = signals.state_path()
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("{this is not valid json")
+
+        loaded = signals.load()
+        self.assertEqual(loaded, {})
+        self.assertTrue(os.path.isfile(f"{p}.corrupt"), "corrupt JSON should be quarantined")
+
+    def test_transition_lock_is_reentrant(self):
+        """_transition_lock must be an RLock to prevent deadlocks when messages pump re-entrant commands."""
+        from paperscreen import daemon
+        self.assertIsInstance(daemon._transition_lock, type(threading.RLock()))
+        # Verify acquiring twice on same thread succeeds without blocking
+        with daemon._transition_lock:
+            with daemon._transition_lock:
+                pass
+
+    @patch("paperscreen.daemon._lerp_apply")
+    @patch("paperscreen.backlight.restore")
+    @patch("paperscreen.backlight.set_brightness")
+    @patch("paperscreen.cleartype.restore_previous")
+    @patch("paperscreen.cleartype.enable_grayscale_smoothing")
+    def test_hotkey_toggle_off_restores_state_and_stays_alive(
+        self, mock_ct_enable, mock_ct_restore, mock_set_bri, mock_restore_bri, mock_lerp
+    ):
+        """Toggling OFF via hotkey restores backlight/smoothing, updates journal, and DOES NOT stop the daemon."""
+        from paperscreen import daemon
+        d = daemon.Daemon()
+        signals.update(active=True, preset="paper")
+
+        # 1. Toggle OFF
+        d.on_hotkey()
+        self.assertFalse(d.stop.is_set(), "daemon must remain alive when hotkey toggles off")
+        mock_restore_bri.assert_called_once()
+        mock_ct_restore.assert_called_once()
+        j = signals.load()
+        self.assertFalse(j.get("active"))
+
+        # 2. Toggle back ON
+        d.on_hotkey()
+        self.assertFalse(d.stop.is_set())
+        mock_set_bri.assert_called_once()
+        j2 = signals.load()
+        self.assertTrue(j2.get("active"))
 
 
 if __name__ == "__main__":

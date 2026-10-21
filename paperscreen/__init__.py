@@ -1,6 +1,6 @@
 """PaperScreen: make your Windows monitor feel like paper."""
 
-__version__ = "1.0.3"
+__version__ = "1.0.4"
 
 from . import backlight, circadian, cleartype, color_matrix, config, signals, winlib  # noqa: F401
 

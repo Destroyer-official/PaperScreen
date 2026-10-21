@@ -366,13 +366,21 @@ def doctor(repair: bool = False) -> int:
         out = subprocess.run(["tasklist", "/FI", "IMAGENAME eq LightBulb.exe"], capture_output=True, text=True).stdout
         if "LightBulb.exe" in out:
             conflicts.append("LightBulb is running — stacked color transforms!")
+        import winreg
+        try:
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Microsoft\ColorFiltering") as k:
+                active_filter, _ = winreg.QueryValueEx(k, "Active")
+                if active_filter:
+                    conflicts.append("Windows Color Filter is active — Magnification API conflict!")
+        except OSError:
+            pass
     except Exception:
         pass
     if conflicts:
         for c in conflicts:
             print(f"[warn] conflict: {c}")
     else:
-        print("[ok] no known gamma-tool conflicts running")
+        print("[ok] no known gamma-tool or Magnification conflicts active")
 
     # 8) autostart status
     try:

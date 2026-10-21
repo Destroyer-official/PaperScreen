@@ -1,56 +1,55 @@
-# PaperScreen 📜
+# PaperScreen
 
-> **Zero Third-Party Dependency Paper Display & Circadian Engine for Windows**  
-> *Transform your standard monitor into a matte, low-glare paper surface to help mitigate digital eye strain during coding, reading, and deep work.*
+A lightweight, zero-dependency display comfort and paper-reading engine for Windows.
 
 [![CI](https://github.com/Destroyer-official/PaperScreen/actions/workflows/ci.yml/badge.svg)](https://github.com/Destroyer-official/PaperScreen/actions)
 [![Release](https://img.shields.io/github/v/release/Destroyer-official/PaperScreen?include_prereleases&color=blue)](https://github.com/Destroyer-official/PaperScreen/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/python-3.10+-brightgreen.svg)](https://www.python.org/)
-[![Platform: Windows](https://img.shields.io/badge/platform-Windows%208%20%7C%2010%20%7C%2011-0078D6.svg)](https://www.microsoft.com/windows)
-[![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20runtime%20python%20pkgs-success.svg)](#zero-dependencies)
+[![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg)](https://www.microsoft.com/windows)
+[![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20runtime%20pkgs-success.svg)](#zero-dependencies)
 
 ---
 
-## 📖 Overview
+## Overview
 
-Standard computer monitors are emissive light sources blasting up to 400 cd/m² of unbuffered `#FFFFFF` light against pitch `#000000` blacks. This high contrast ratio and saturated RGB primaries can contribute to pupillary fatigue, reduced blink rates, and ocular dryness.
+Emissive computer displays present high luminance contrast and saturated primaries that can lead to ocular dryness, reduced blink rates, and fatigue during extended reading and coding sessions.
 
-**PaperScreen** transforms your Windows desktop appearance by combining **four ergonomic interventions**:
+**PaperScreen** adjusts your Windows desktop appearance through four integrated mechanisms:
 
-1. **OS-Wide 5x5 Color Matrix Engine** (Windows Magnification API): Algorithmic tone mapping that lifts pure digital black to charcoal (`#1E1C1A`), compresses white to unbleached parchment (`#F3EBDD`), and attenuates primary color saturation.
-2. **Dual-Channel Hardware Backlight Sync**: Real hardware brightness control (0–100) mapped to device physical ranges via DDC/CI over HDMI/DP for external monitors + WMI for internal laptop displays.
-3. **20-20-20 Micro-Break Watchdog**: Idle-aware, non-intrusive break reminders (every 20 minutes, look 20 feet away for 20 seconds).
-4. **Grayscale Font Smoothing**: Switches ClearType subpixel rendering to grayscale with a system-wide `WM_SETTINGCHANGE` broadcast, reducing chromatic color fringing on tinted text.
+1. **OS-Wide 5x5 Color Matrix Engine**: Tone-maps the entire virtual desktop using the Windows Magnification API (`MagSetFullscreenColorEffect`), lifting black to soft charcoal (`#15120F`), compressing peak white to warm parchment (`#EAC5A8`), and desaturating primaries.
+2. **Dual-Channel Hardware Backlight Control**: Directly adjusts monitor backlight levels (0–100) via VESA DDC/CI over HDMI/DisplayPort and WMI for internal laptop panels. Includes no-op skipping to prevent monitor EEPROM wear.
+3. **Session-Bound Grayscale Font Smoothing**: Temporarily switches ClearType subpixel rendering to standard grayscale via `SystemParametersInfoW` to eliminate colored fringing on tinted text, broadcasting `WM_SETTINGCHANGE` without altering permanent registry defaults.
+4. **20-20-20 Eye Break Reminders**: An idle-aware background timer that prompts you every 20 minutes to look at an object 20 feet (~6 meters) away for 20 seconds.
 
-> 🩺 **Medical & Scientific Honesty**: Blue-light software filters do **not** cure eye strain ([Cochrane Systematic Review 2023, 17 RCTs](https://pubmed.ncbi.nlm.nih.gov/37593770/)). Eye strain is primarily caused by **reduced blink frequency, incomplete blinks, ocular dryness, and excessive luminance mismatch** ([TFOS Lifestyle Report 2023, PMID 37062428](https://pubmed.ncbi.nlm.nih.gov/37062428/); [clinical incomplete blink analysis 2024–2026, PMID 39491645](https://pubmed.ncbi.nlm.nih.gov/39491645/)). PaperScreen's approach focuses on **ambient luminance matching, structured micro-breaks, and glare reduction**. Warm color transforms serve as software-level approximations for **circadian melatonin hygiene** (CIE S 026:2018), bounded by the physical colorimetry and panel characteristics of your display.
+> **Ergonomic & Scientific Context**: Peer-reviewed reviews (such as the 2023 Cochrane Systematic Review on blue-filtering spectacle lenses) confirm that blue filtration alone does not prevent digital eye strain. Clinical evidence (TFOS DEWS II, TFOS Lifestyle Report 2023) indicates that eye discomfort stems primarily from reduced blink frequency, ocular surface dryness, and luminance mismatches with ambient surroundings. PaperScreen addresses these factors through **ambient luminance matching, structured 20-20-20 micro-breaks, and glare attenuation**. Warm color transforms serve as software approximations for **circadian melatonin hygiene** (CIE S 026:2018).
 
 ---
 
-## 🎨 Color Presets
+## Color Presets
 
-*Note: Target CCT values are approximate software color-transform models, not calibrated physical display emissions.*
+*Visual ergonomics literature generally favors positive polarity (dark text on a light background) for rapid reading and visual acuity. `inverted_paper` provides an alternative dark mode designed to invert background luminance while preserving syntax highlighting.*
 
 | Preset | Target CCT | Desaturation | Black Floor | White Ceiling | Best For |
 |---|---|---|---|---|---|
-| `paper` *(default)* | ~4400 K | 65% | 0.10 | 0.90 | Daylight coding, web reading, authentic matte print look |
-| `sepia` | ~3600 K | 70% | 0.12 | 0.86 | Antique book aesthetic & evening reading |
-| `warm_reading` | ~3000 K | 55% | 0.12 | 0.84 | Long PDF & textbook study under dim ambient lighting |
-| `eink` | 6500 K (Neutral) | 100% | 0.08 | 0.92 | Strictly achromatic neutral grayscale monochrome (R=G=B) |
-| `eink_warm` | ~4000 K | 100% | 0.08 | 0.90 | Warm monochrome paper emulation |
-| `amber_candle` | ~2200 K | 75% | 0.08 | 0.82 | Deep amber reading with heavy blue-channel attenuation |
-| `nightpaper` | ~3200 K | 60% | 0.07 | 0.72 | Late night deep work (software-level matrix luminance reduction) |
-| `inverted_paper` | ~4400 K | 20% | 0.10 | 0.90 | Dark Paper: contrast inversion preserving syntax distinction |
-| `custom` | Dynamic | Dynamic | Dynamic | Dynamic | Real-time live slider calibration via GUI (`--gui`) |
-| `auto` | Dynamic | Dynamic | Dynamic | Dynamic | Automated circadian day ↔ night sync (standard hours or NOAA solar) |
+| `paper` *(default)* | ~4400 K | 65% | 0.10 | 0.90 | Daylight reading, technical writing, and general coding |
+| `sepia` | ~3600 K | 70% | 0.12 | 0.86 | Warm document study and late afternoon work |
+| `warm_reading` | ~3000 K | 55% | 0.12 | 0.84 | Extended PDF reading in dim ambient lighting |
+| `eink` | 6500 K | 100% | 0.08 | 0.92 | Achromatic monochrome grayscale ($R = G = B$) |
+| `eink_warm` | ~4000 K | 100% | 0.08 | 0.90 | Warm monochrome paperwhite simulation |
+| `amber_candle` | ~2200 K | 75% | 0.08 | 0.82 | Deep evening amber with strong blue attenuation (~75–90%) |
+| `nightpaper` | ~3200 K | 60% | 0.07 | 0.72 | Late-night work with software-level matrix dimming |
+| `inverted_paper` | ~4400 K | 20% | 0.10 | 0.90 | Dark paper mode preserving relative chromatic syntax contrast |
+| `custom` | Configurable | Configurable | Configurable | Configurable | Tuned via the visual calibration GUI (`--gui`) |
+| `auto` | Dynamic | Dynamic | Dynamic | Dynamic | Automated day/night switching (clock-based or NOAA solar) |
 
 ---
 
-## 🚀 Installation & Getting Started
+## Installation
 
-### Option A: Standalone Executable (No Python Required)
+### Option A: Standalone Executable (Recommended, No Python Required)
 1. Download `PaperScreen.exe` from the [Latest Release](https://github.com/Destroyer-official/PaperScreen/releases).
-2. Double-click `PaperScreen.exe` or run it from PowerShell:
+2. Run directly from PowerShell or Command Prompt:
    ```powershell
    .\PaperScreen.exe on
    ```
@@ -61,7 +60,7 @@ pip install git+https://github.com/Destroyer-official/PaperScreen.git
 paperscreen on
 ```
 
-### Option C: Run from Source (Zero Dependencies)
+### Option C: Run from Source (Zero External Dependencies)
 ```powershell
 git clone https://github.com/Destroyer-official/PaperScreen.git
 cd PaperScreen
@@ -70,92 +69,76 @@ python -m paperscreen on
 
 ---
 
-## 🖥️ Usage & Desktop Integration
+## Desktop Integration & Controls
 
-### 1. Global Hotkeys
-- **`Ctrl + Alt + P`**: Toggle Paper Mode instantly on / off.
-- **`Ctrl + Alt + N`**: Cycle through paper presets on the fly (`Paper` ➔ `Sepia` ➔ `Warm Reading` ➔ `E-Ink` ➔ `Kindle Warm` ➔ `Amber Candle` ➔ `Night Paper` ➔ `Smart Dark Paper`).
+### Global Hotkeys
+- **`Ctrl + Alt + P`**: Toggle Paper Mode on or off instantly.
+- **`Ctrl + Alt + N`**: Cycle through presets (`Paper` &rarr; `Sepia` &rarr; `Warm Reading` &rarr; `E-Ink` &rarr; `Kindle Warm` &rarr; `Amber Candle` &rarr; `Night Paper` &rarr; `Inverted Paper`).
 
-### 2. Native System Tray Icon
-When active, PaperScreen sits quietly in your taskbar notification area with a custom parchment paper icon:
-- **Left Click**: Open context menu
-- **Double Click**: Toggle Paper Mode on/off
-- **Right Click**: 
-  - Switch Presets (`Paper`, `Sepia`, `Amber Candle`, `Smart Dark Paper`, etc.)
-  - Set Hardware Backlight (`25%`, `40%`, `60%`, `75%`, `100%`)
-  - 20-20-20 Break Timer (Toggle, "Take Break Now")
-  - Toggle Grayscale Font Smoothing
-  - Open Visual Preferences & Calibration Dialog
-  - Toggle "Start with Windows"
-  - View Live Diagnostics (`Doctor`)
+### System Tray Interface
+When active, PaperScreen runs in the system tray with a custom parchment paper icon:
+- **Left Click**: Open the context menu.
+- **Double Click**: Toggle paper mode on/off.
+- **Right Click**: Quick access to presets, backlight levels (`25%` to `100%`), 20-20-20 breaks, font smoothing toggle, and settings.
 
-### 3. Visual Preferences & Calibration GUI
-Fine-tune color temperature, desaturation, contrast, and black/white luminance limits with zero external dependencies:
+### Visual Preferences & Calibration GUI
+Launch the built-in Tkinter preferences dialog to calibrate color temperature, desaturation, contrast, and black/white floors with real-time preview:
 ```powershell
 python -m paperscreen settings
 # Or
 python -m paperscreen config --gui
 ```
 
-### 4. CLI Command Reference
+### CLI Command Reference
+
+| Command | Description |
+|---|---|
+| `paperscreen on` | Activate paper mode (launches resident daemon with tray icon) |
+| `paperscreen on --preset amber_candle` | Activate with a specific preset |
+| `paperscreen off` | Revert display to neutral identity, restore hardware state, and exit |
+| `paperscreen toggle` | Toggle paper mode on or off |
+| `paperscreen cycle` | Advance to the next preset (equivalent to `Ctrl+Alt+N`) |
+| `paperscreen status` | Report active engine state, PID, preset, and monitor brightness |
+| `paperscreen monitors` | List detected monitors and current DDC/WMI brightness levels |
+| `paperscreen doctor` | Run environment diagnostics (APIs, DDC, HDR, conflicts) |
+| `paperscreen doctor --repair` | Reset display matrix to identity, restore unrestored backlight, and reset smoothing |
+| `paperscreen break --detached` | Run the 20-20-20 break timer in the background |
+| `paperscreen autostart --enable` | Register PaperScreen in HKCU Run to start at Windows login |
+| `paperscreen config --set key=value` | Update persistent configuration options |
+
+---
+
+## Reliability & Architecture
+
+- **Session-Bound Magnification Effect**: The Windows Magnification API color effect lives exclusively within the Desktop Window Manager (DWM) session. If the daemon process exits or is terminated, DWM automatically reverts the color transform back to neutral identity.
+- **Workstation Lock Isolation**: Listens for `WM_WTSSESSION_CHANGE` via Terminal Services (`wtsapi32.dll`) to reset transforms to neutral identity upon workstation lock (`Win+L`), preventing matrix leakage on the secure desktop or Windows Hello camera, and restoring active presets upon unlock.
+- **Re-Entrant Locking & Idle Waiting**: Transition routines use `threading.RLock()` and a monotonic generation counter to prevent deadlocks when tray events arrive during animations. The main loop uses `MsgWaitForMultipleObjects` to achieve **0% idle CPU utilization** while responding instantly to messages.
+- **Transactional State Journal**: Hardware brightness and font-smoothing states are recorded in `%APPDATA%\PaperScreen\state.json`, protected by a cross-process Windows Named Mutex (`Local\PaperScreenJournalMutex`). Atomic file replacement (`os.replace` after `os.fsync`) prevents corruption.
+- **Offline Solar Circadian Calculation**: When `solar_circadian = true`, sunrise and sunset times are computed locally using NOAA solar geometry algorithms (Meeus formulas) from your system timezone or configured coordinates, without external network requests.
+- **Explorer Recovery**: Intercepts the `TaskbarCreated` broadcast message to restore the notification tray icon if `explorer.exe` restarts.
+
+---
+
+## Hardware Compatibility & Limitations
+
+- **DDC/CI Support**: External monitor backlight control requires a display and cable (HDMI, DisplayPort, or USB-C DisplayPort Alternate Mode) that passes DDC/CI I2C signals. Certain USB hubs, docks, or display converters do not pass DDC signals; in those cases, PaperScreen logs a diagnostic warning and relies on matrix tone-mapping.
+- **Multi-Monitor Global Effect**: Because `MagSetFullscreenColorEffect` operates at the DWM virtual-desktop composition level, the color transform applies across all connected monitors simultaneously.
+- **Windows HDR**: On displays running Windows HDR (Advanced Color / scRGB 16-bit floating point), Magnification API 8-bit transformations may be tone-mapped by the GPU display driver. Run `paperscreen doctor` to verify your display configuration.
+
+---
+
+## Testing
+
+PaperScreen includes an automated test suite verifying matrix mathematics, circadian schedules, Win32 memory alignments, transactional recovery, and failure-path resilience:
 
 ```powershell
-# Core Controls
-python -m paperscreen on                      # Activate paper mode (spawns daemon + tray)
-python -m paperscreen on --preset amber_candle # Activate with Daylight 2200K amber preset
-python -m paperscreen cycle                   # Cycle to next paper preset (or Ctrl+Alt+N)
-python -m paperscreen off                     # Restore normal display and exit
-python -m paperscreen toggle                  # Instant one-touch toggle (script / macro friendly)
-python -m paperscreen status                  # Show current active engine status
-
-# NOAA Astronomical Solar Circadian Sync
-python -m paperscreen config --set solar_circadian=true # Auto-switch using true solar sunrise/sunset
-
-# Hardware & Diagnostics
-python -m paperscreen doctor                  # Full system diagnostic (APIs, DDC, HDR)
-python -m paperscreen monitors                # List connected monitors and brightness
-python -m paperscreen matrix --preset paper   # Inspect 5x5 color transform matrix
-python -m paperscreen log                     # View recent diagnostic log entries
-
-# Break Reminders, GUI & Automation
-python -m paperscreen settings                # Launch visual calibration GUI
-python -m paperscreen break --detached        # Run 20-20-20 break timer in background
-python -m paperscreen autostart --enable      # Automatically start PaperScreen at login
-python -m paperscreen config --set kelvin=4800 --set backlight_day=55
+pytest -v
 ```
 
----
-
-## 🛡️ Reliability & State Recovery
- 
-- **DWM Session-Bound Magnification**: The Windows Magnification API color effect lives exclusively within the Desktop Window Manager (DWM) session. If the daemon process exits or is terminated, DWM automatically reverts the color transform to identity.
-- **Session Lock & Unlock Isolation**: Registers for `WM_WTSSESSION_CHANGE` via Terminal Services (`wtsapi32.dll`) to reset transforms to neutral identity upon workstation lock (`Win+L`), preventing matrix leakage on the secure desktop or Windows Hello camera, and automatically restores your paper preset upon unlock.
-- **Transactional Backlight & Smoothing Journal**: DDC/WMI hardware brightness and ClearType smoothing settings are stored in an on-disk journal synchronized with Windows Named Mutexes. If an operation is interrupted or a monitor fails to respond, original values are preserved for retry rather than discarded.
-- **One-Touch Repair Command**: Run `paperscreen doctor --repair` at any time to reset the desktop matrix to neutral identity, reapply any unrestored hardware backlight levels, and restore standard font smoothing.
-- **Explorer Restart Recovery**: Listens for the `TaskbarCreated` broadcast message to automatically restore the notification icon if `explorer.exe` restarts.
-- **Sleep & Wake Synchronization**: Listens for `WM_POWERBROADCAST` to smoothly reapply transforms and backlight levels when your PC wakes from sleep or hibernation.
-- **Auto-Pause for Fullscreen Apps**: Automatically pauses paper mode when a full-screen game, video, or color-sensitive program (e.g. `photoshop.exe`, `figma.exe`) is focused.
-- **OS-Level Mutexes**: Uses Windows Named Mutexes (`Local\PaperScreenDaemonSingleInstanceMutex` and `Local\PaperScreenBreaksMutex`) to prevent duplicate instances with zero TOCTOU race conditions.
+*74 automated tests, 100% pass rate.*
 
 ---
 
-## 🧪 Testing
-
-PaperScreen includes a comprehensive test suite covering color math, civil circadian rules, Win32 memory alignments, transactional recovery, and failure-path resilience:
-
-```powershell
-pytest
-```
-*Current test suite: 62 automated tests, 100% pass rate.*
-
----
-
-## 📚 Technical Documentation
-
-For deep technical details on the Magnification API, DDC/CI I2C protocol, WMI COM methods, and tone-mapping math, see [DOCUMENTATION.md](DOCUMENTATION.md) and [PLAN.md](PLAN.md).
-
----
-
-## ⚖️ License
+## License
 
 Distributed under the [MIT License](LICENSE). Copyright (c) 2026 PaperScreen Contributors.

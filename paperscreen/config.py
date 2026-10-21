@@ -35,6 +35,7 @@ DEFAULTS = {
     "solar_circadian": False,       # calculate true astronomical sunrise/sunset
     "latitude": None,               # optional GPS latitude (e.g. 40.71)
     "longitude": None,              # optional GPS longitude (e.g. -74.00)
+    "utc_offset_hours": None,       # optional UTC offset override in hours
 }
 
 
@@ -47,8 +48,38 @@ def config_path() -> str:
     return os.path.join(config_dir(), CONFIG_NAME)
 
 
+def _safe_int(val, default: int, lo: int | None = None, hi: int | None = None) -> int:
+    try:
+        if val is None:
+            return default
+        res = int(val)
+        if lo is not None:
+            res = max(lo, res)
+        if hi is not None:
+            res = min(hi, res)
+        return res
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float(val, default: float, lo: float | None = None, hi: float | None = None) -> float:
+    try:
+        if val is None:
+            return default
+        res = float(val)
+        if lo is not None:
+            res = max(lo, res)
+        if hi is not None:
+            res = min(hi, res)
+        return res
+    except (ValueError, TypeError):
+        return default
+
+
 def _validate(cfg: dict) -> dict:
     out = dict(DEFAULTS)
+    if not isinstance(cfg, dict):
+        return out
     for k, v in cfg.items():
         if k not in DEFAULTS:
             continue  # unknown keys dropped silently (forward compat)
@@ -66,25 +97,25 @@ def _validate(cfg: dict) -> dict:
         "auto",
         "off",
     )
-    out["preset"] = str(out["preset"]) if out["preset"] in VALID_PRESETS else "paper"
-    out["kelvin"] = min(15000, max(1000, int(out["kelvin"])))
-    out["desaturation"] = min(1.0, max(0.0, float(out["desaturation"])))
-    out["black_floor"] = min(0.5, max(0.0, float(out["black_floor"])))
-    out["white_ceiling"] = min(1.0, max(0.2, float(out["white_ceiling"])))
-    out["contrast"] = min(2.0, max(0.2, float(out["contrast"])))
-    out["backlight_day"] = min(100, max(0, int(out["backlight_day"])))
-    out["backlight_night"] = min(100, max(0, int(out["backlight_night"])))
-    out["night_start_hour"] = min(23, max(0, int(out["night_start_hour"])))
-    out["night_end_hour"] = min(23, max(0, int(out["night_end_hour"])))
-    out["grayscale_smoothing"] = bool(out["grayscale_smoothing"])
-    out["restore_backlight_on_exit"] = bool(out["restore_backlight_on_exit"])
-    out["breaks_enabled"] = bool(out["breaks_enabled"])
-    out["break_interval_minutes"] = min(60, max(1, int(out["break_interval_minutes"])))
-    break_dur = int(out["break_duration_seconds"])
-    out["break_duration_seconds"] = min(120, max(5, break_dur))
-    out["smooth_transition_ms"] = min(10000, max(0, int(out["smooth_transition_ms"])))
-    out["hotkey_toggle"] = bool(out["hotkey_toggle"])
-    out["night_dim_matrix"] = bool(out["night_dim_matrix"])
+    p_str = str(out.get("preset", "paper"))
+    out["preset"] = p_str if p_str in VALID_PRESETS else "paper"
+    out["kelvin"] = _safe_int(out.get("kelvin"), DEFAULTS["kelvin"], 1000, 15000)
+    out["desaturation"] = _safe_float(out.get("desaturation"), DEFAULTS["desaturation"], 0.0, 1.0)
+    out["black_floor"] = _safe_float(out.get("black_floor"), DEFAULTS["black_floor"], 0.0, 0.5)
+    out["white_ceiling"] = _safe_float(out.get("white_ceiling"), DEFAULTS["white_ceiling"], 0.2, 1.0)
+    out["contrast"] = _safe_float(out.get("contrast"), DEFAULTS["contrast"], 0.2, 2.0)
+    out["backlight_day"] = _safe_int(out.get("backlight_day"), DEFAULTS["backlight_day"], 0, 100)
+    out["backlight_night"] = _safe_int(out.get("backlight_night"), DEFAULTS["backlight_night"], 0, 100)
+    out["night_start_hour"] = _safe_int(out.get("night_start_hour"), DEFAULTS["night_start_hour"], 0, 23)
+    out["night_end_hour"] = _safe_int(out.get("night_end_hour"), DEFAULTS["night_end_hour"], 0, 23)
+    out["grayscale_smoothing"] = bool(out.get("grayscale_smoothing"))
+    out["restore_backlight_on_exit"] = bool(out.get("restore_backlight_on_exit", True))
+    out["breaks_enabled"] = bool(out.get("breaks_enabled", True))
+    out["break_interval_minutes"] = _safe_int(out.get("break_interval_minutes"), DEFAULTS["break_interval_minutes"], 1, 60)
+    out["break_duration_seconds"] = _safe_int(out.get("break_duration_seconds"), DEFAULTS["break_duration_seconds"], 5, 120)
+    out["smooth_transition_ms"] = _safe_int(out.get("smooth_transition_ms"), DEFAULTS["smooth_transition_ms"], 0, 10000)
+    out["hotkey_toggle"] = bool(out.get("hotkey_toggle", True))
+    out["night_dim_matrix"] = bool(out.get("night_dim_matrix", False))
     out["auto_pause_fullscreen"] = bool(out.get("auto_pause_fullscreen", False))
     if isinstance(out.get("excluded_apps"), list):
         out["excluded_apps"] = [str(a).lower().strip() for a in out["excluded_apps"] if str(a).strip()]
@@ -101,6 +132,11 @@ def _validate(cfg: dict) -> dict:
             out["longitude"] = min(180.0, max(-180.0, float(out["longitude"])))
         except (ValueError, TypeError):
             out["longitude"] = None
+    if out.get("utc_offset_hours") is not None:
+        try:
+            out["utc_offset_hours"] = min(14.0, max(-14.0, float(out["utc_offset_hours"])))
+        except (ValueError, TypeError):
+            out["utc_offset_hours"] = None
     return out
 
 
@@ -114,7 +150,7 @@ def load() -> dict:
         if not isinstance(data, dict):
             return dict(DEFAULTS)
         return _validate(data)
-    except (OSError, ValueError):
+    except (OSError, ValueError, TypeError):
         return dict(DEFAULTS)
 
 
@@ -126,6 +162,8 @@ def save(cfg: dict) -> str:
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(clean, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, target)
     except Exception:
         if os.path.isfile(tmp):

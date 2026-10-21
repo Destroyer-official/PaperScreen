@@ -1,78 +1,27 @@
 """Spawning utilities for the detached daemon process.
 
-Uses ctypes CreateProcessW with DETACHED_PROCESS so the daemon owns its
+Uses subprocess.Popen with detached flags so the daemon owns its
 own console-less session and survives the caller exiting.
 """
 
 from __future__ import annotations
 
-import ctypes
+import os
+import subprocess
 import sys
-from ctypes import wintypes
 
-DETACHED_PROCESS = 0x00000008
-CREATE_NEW_PROCESS_GROUP = 0x00000200
+IS_WINDOWS = sys.platform == "win32"
 
-kernel32 = ctypes.windll.kernel32
-kernel32.CreateProcessW.argtypes = [
-    wintypes.LPCWSTR,
-    wintypes.LPWSTR,
-    ctypes.c_void_p,
-    ctypes.c_void_p,
-    wintypes.BOOL,
-    wintypes.DWORD,
-    ctypes.c_void_p,
-    wintypes.LPCWSTR,
-    ctypes.c_void_p,
-    ctypes.c_void_p,
-]
-kernel32.CreateProcessW.restype = wintypes.BOOL
-kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-kernel32.CloseHandle.restype = wintypes.BOOL
-
-
-class _STARTUPINFO(ctypes.Structure):
-    _fields_ = [
-        ("cb", wintypes.DWORD),
-        ("lpReserved", wintypes.LPWSTR),
-        ("lpDesktop", wintypes.LPWSTR),
-        ("lpTitle", wintypes.LPWSTR),
-        ("dwX", wintypes.DWORD),
-        ("dwY", wintypes.DWORD),
-        ("dwXSize", wintypes.DWORD),
-        ("dwYSize", wintypes.DWORD),
-        ("dwXCountChars", wintypes.DWORD),
-        ("dwYCountChars", wintypes.DWORD),
-        ("dwFillAttribute", wintypes.DWORD),
-        ("dwFlags", wintypes.DWORD),
-        ("wShowWindow", wintypes.WORD),
-        ("cbReserved2", wintypes.WORD),
-        ("lpReserved2", ctypes.c_void_p),
-        ("hStdInput", wintypes.HANDLE),
-        ("hStdOutput", wintypes.HANDLE),
-        ("hStdError", wintypes.HANDLE),
-    ]
-
-
-class _PROCESS_INFORMATION(ctypes.Structure):
-    _fields_ = [
-        ("hProcess", wintypes.HANDLE),
-        ("hThread", wintypes.HANDLE),
-        ("dwProcessId", wintypes.DWORD),
-        ("dwThreadId", wintypes.DWORD),
-    ]
-
-
-def _quote(s: str) -> str:
-    if " " in s or "\t" in s:
-        return f'"{s}"'
-    return s
+if IS_WINDOWS:
+    import ctypes
+    from ctypes import wintypes
+    kernel32 = ctypes.windll.kernel32
+else:
+    kernel32 = None
 
 
 def start_detached(module_args: list) -> int:
     """Start daemon detached with correct working directory and module path. Returns pid, 0 on fail."""
-    import os
-    import subprocess
     pkg_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     env = dict(os.environ)
     env["PYTHONPATH"] = pkg_root + (os.pathsep + env["PYTHONPATH"] if "PYTHONPATH" in env else "")
@@ -86,7 +35,6 @@ def start_detached(module_args: list) -> int:
         cmdline = [exe, "-m", *module_args]
         cwd = pkg_root
 
-    DETACHED_PROCESS = 0x00000008
     CREATE_NEW_PROCESS_GROUP = 0x00000200
     CREATE_NO_WINDOW = 0x08000000
 
@@ -116,6 +64,9 @@ DAEMON_MUTEX_NAME = "Local\\PaperScreenDaemonSingleInstanceMutex"
 
 def is_daemon_running() -> bool:
     """Check if the PaperScreen daemon is actually running via the OS Named Mutex."""
+    if not IS_WINDOWS or kernel32 is None:
+        return False
+    from ctypes import wintypes
     SYNCHRONIZE = 0x00100000
     kernel32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
     kernel32.OpenMutexW.restype = wintypes.HANDLE
@@ -127,8 +78,9 @@ def is_daemon_running() -> bool:
 
 
 def is_alive(pid: int) -> bool:
-    if not pid or pid <= 0:
+    if not IS_WINDOWS or kernel32 is None or not pid or pid <= 0:
         return False
+    from ctypes import wintypes
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     STILL_ACTIVE = 259
     h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)

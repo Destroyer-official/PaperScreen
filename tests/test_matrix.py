@@ -97,6 +97,31 @@ class MatrixTests(unittest.TestCase):
         for i in range(1, len(vals)):
             self.assertGreaterEqual(vals[i], vals[i - 1])
 
+    def test_golden_paper_colors(self):
+        m = color_matrix.preset("paper")
+        b = color_matrix.apply_matrix(m, (0.0, 0.0, 0.0))
+        w = color_matrix.apply_matrix(m, (1.0, 1.0, 1.0))
+        b_hex = "#%02X%02X%02X" % tuple(round(x * 255) for x in b)
+        w_hex = "#%02X%02X%02X" % tuple(round(x * 255) for x in w)
+        self.assertEqual(b_hex, "#15120F", "Golden black floor for paper preset")
+        self.assertEqual(w_hex, "#EAC5A8", "Golden white ceiling for paper preset")
+
+    def test_modules_all_imports(self):
+        import importlib
+        for modname in [
+            "paperscreen.color_matrix",
+            "paperscreen.paper_engine",
+            "paperscreen.config",
+            "paperscreen.signals",
+            "paperscreen.daemon",
+            "paperscreen.spawn",
+            "paperscreen.backlight",
+        ]:
+            mod = importlib.import_module(modname)
+            self.assertTrue(hasattr(mod, "__all__"), f"{modname} must define __all__")
+            for symbol in mod.__all__:
+                self.assertTrue(hasattr(mod, symbol), f"{modname} missing symbol from __all__: {symbol}")
+
     def test_auto_preset_config_valid(self):
         clean = config._validate({"preset": "auto"})
         self.assertEqual(clean["preset"], "auto")
@@ -126,6 +151,14 @@ class ConfigTests(unittest.TestCase):
     def test_unknown_keys_dropped(self):
         clean = config._validate({"malware": True})
         self.assertNotIn("malware", clean)
+
+    def test_null_and_invalid_types_safe(self):
+        # Must not raise TypeError when fields are None or wrong type
+        clean = config._validate({"kelvin": None, "desaturation": None, "contrast": "invalid", "utc_offset_hours": "-5.5"})
+        self.assertEqual(clean["kelvin"], config.DEFAULTS["kelvin"])
+        self.assertEqual(clean["desaturation"], config.DEFAULTS["desaturation"])
+        self.assertEqual(clean["contrast"], config.DEFAULTS["contrast"])
+        self.assertEqual(clean["utc_offset_hours"], -5.5)
 
     def test_night_window(self):
         import datetime

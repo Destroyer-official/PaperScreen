@@ -53,7 +53,8 @@ CYCLE_PRESETS = (
 )
 
 
-_transition_lock = threading.Lock()
+_transition_lock = threading.RLock()
+_transition_generation = 0
 
 
 def matrix_for(preset: str, night: bool = False):
@@ -86,13 +87,17 @@ def matrix_for(preset: str, night: bool = False):
 def _lerp_apply(target, on_done=None):
     """Smoothly transition from current effect to `target` matrix.
 
-    Guarded by _transition_lock to prevent concurrent transition interleaving.
+    Guarded by re-entrant _transition_lock with generation tracking.
     Runs on the main GUI thread to comply strictly with the Windows Magnification
     API thread affinity rule (Win32 MagSetFullscreenColorEffect fails on secondary threads).
     Pumps Windows messages via PeekMessageW on every frame so UI, tray clicks, and hotkeys
-    remain 100% responsive throughout transitions.
+    remain 100% responsive throughout transitions without deadlocking on re-entrant commands.
     """
+    global _transition_generation
     with _transition_lock:
+        _transition_generation += 1
+        my_gen = _transition_generation
+
         cfg = config.load()
         trans_ms = cfg.get("smooth_transition_ms", 1000)
         trans_sec = max(0.0, trans_ms / 1000.0)
@@ -124,9 +129,15 @@ def _lerp_apply(target, on_done=None):
             while u32.PeekMessageW(pmsg, 0, 0, 0, 1):
                 if msg.message == 0x0012:  # WM_QUIT
                     u32.PostQuitMessage(0)
-                    break
+                    return
                 u32.TranslateMessage(pmsg)
                 u32.DispatchMessageW(pmsg)
+                # If a re-entrant command initiated a newer transition, yield immediately
+                if _transition_generation != my_gen:
+                    return
+
+            if _transition_generation != my_gen:
+                return
 
             t = color_matrix.ease(i / steps)
             try:
@@ -134,6 +145,9 @@ def _lerp_apply(target, on_done=None):
             except Exception as exc:
                 logger.debug(f"Interpolation step failed: {exc}")
             time.sleep(1.0 / TRANSITION_FPS)
+
+        if _transition_generation != my_gen:
+            return
 
         # ensure exact target
         try:
@@ -157,14 +171,51 @@ class Daemon:
 
     def on_hotkey(self) -> None:
         j = signals.load()
+        cfg = config.load()
         if j.get("active"):
-            # toggling OFF: revert matrix, flag journal off, exit
+            # Toggling OFF: revert matrix, restore backlight & smoothing, mark journal paused
+            # Daemon remains running in tray so hotkey can toggle back ON.
             _lerp_apply(color_matrix.identity())
-            signals.update(active=False, pid=None)
-            self.stop.set()
+            if cfg.get("restore_backlight_on_exit", True):
+                try:
+                    backlight.restore()
+                except Exception as exc:
+                    logger.debug(f"Hotkey toggle-off backlight restore: {exc}")
+            try:
+                cleartype.restore_previous()
+            except Exception as exc:
+                logger.debug(f"Hotkey toggle-off cleartype restore: {exc}")
+            signals.update(active=False, status="paused")
+            self.last_matrix = color_matrix.identity()
+            if self.tray_icon:
+                self.tray_icon.update_tooltip("PaperScreen - Off", active=False)
+                self.tray_icon.show_balloon("PaperScreen", "Paper mode turned off.")
+            else:
+                toasts.show("PaperScreen", "Paper mode turned off.")
         else:
-            signals.update(active=True, preset="paper")
-            _lerp_apply(matrix_for("paper", config.is_night()))
+            preset = j.get("preset") or cfg.get("preset", "paper")
+            night = config.is_night()
+            target = matrix_for(preset, night)
+            signals.update(active=True, preset=preset, status="ready")
+            _lerp_apply(target)
+            self.current_preset, self.current_night = preset, night
+            self.last_matrix = target
+            level = cfg["backlight_night"] if night else cfg["backlight_day"]
+            try:
+                backlight.set_brightness(level)
+            except Exception as exc:
+                logger.debug(f"Hotkey toggle-on backlight set: {exc}")
+            if cfg.get("grayscale_smoothing"):
+                try:
+                    cleartype.enable_grayscale_smoothing()
+                except Exception as exc:
+                    logger.debug(f"Hotkey toggle-on cleartype enable: {exc}")
+            title = preset.replace("_", " ").title()
+            if self.tray_icon:
+                self.tray_icon.update_tooltip(f"PaperScreen - Active: {title}", active=True)
+                self.tray_icon.show_balloon("PaperScreen", f"Paper mode active ({title}).")
+            else:
+                toasts.show("PaperScreen", f"Paper mode active ({title}).")
 
     def on_cycle_preset(self) -> None:
         """Cycle to next preset in CYCLE_PRESETS (Ctrl+Alt+N)."""
@@ -415,18 +466,25 @@ class Daemon:
 
                     # Skip adjustments while workstation session is locked
                     if getattr(self, "session_locked", False):
-                        time.sleep(0.04)
                         continue
 
                     j = signals.load()
-                    if j.get("active") is False:
-                        logger.info("Deactivation signal received; shutting down daemon.")
+                    if j.get("status") == "stopping":
+                        logger.info("Stopping signal received; shutting down daemon.")
                         self.stop.set()
                         break
 
+                    if j.get("active") is False:
+                        # Daemon is paused/toggled off
+                        if self.last_matrix != color_matrix.identity():
+                            _lerp_apply(color_matrix.identity())
+                            self.last_matrix = color_matrix.identity()
+                            if self.tray_icon:
+                                self.tray_icon.update_tooltip("PaperScreen - Off", active=False)
+                        continue
+
                     # While settings live preview is being tuned, do not overwrite the matrix
                     if j.get("preview_matrix") is not None:
-                        time.sleep(0.04)
                         continue
 
                     cfg = config.load()
@@ -448,10 +506,18 @@ class Daemon:
                             self.last_matrix = "paused"
                             if self.tray_icon:
                                 self.tray_icon.update_tooltip("PaperScreen - Paused (App Exclusion)", active=False)
-                        time.sleep(0.04)
                         continue
                     elif self.last_matrix == "paused":
                         self.last_matrix = None
+
+                    # Check if day/night changed to update backlight automatically (circadian sync)
+                    if night != self.current_night and j.get("active", True):
+                        level = cfg["backlight_night"] if night else cfg["backlight_day"]
+                        try:
+                            backlight.set_brightness(level)
+                            logger.info(f"Circadian transition: backlight adjusted to {level}%")
+                        except Exception as exc:
+                            logger.debug(f"Backlight circadian transition failed: {exc}")
 
                     # Detect if target matrix changed (preset, day/night, or custom config parameters)
                     target = matrix_for(preset, night)
@@ -467,7 +533,12 @@ class Daemon:
                         if self.tray_icon:
                             self.tray_icon.update_tooltip(f"PaperScreen - Active: {preset.title()}", active=True)
 
-                time.sleep(0.04)
+                # Efficient message wait: sleeps up to 500ms, or wakes instantly when a message arrives
+                u32 = winlib.user32()
+                if hasattr(u32, "MsgWaitForMultipleObjects"):
+                    u32.MsgWaitForMultipleObjects(0, None, False, int(POLL_SECONDS * 1000), 0x04FF)
+                else:
+                    time.sleep(0.04)
         finally:
             logger.info(f"Daemon process {os.getpid()} entering finally cleanup block")
             if hotkey_ok:
@@ -478,6 +549,16 @@ class Daemon:
                 self.tray_icon.remove()
             self.stop.set()
             _revert()
+            cfg = config.load()
+            if cfg.get("restore_backlight_on_exit", True):
+                try:
+                    backlight.restore()
+                except Exception as exc:
+                    logger.debug(f"Daemon cleanup backlight restore: {exc}")
+            try:
+                cleartype.restore_previous()
+            except Exception as exc:
+                logger.debug(f"Daemon cleanup cleartype restore: {exc}")
             signals.update(active=False, pid=None, status="stopped")
             if h_mutex:
                 k32.ReleaseMutex(h_mutex)
@@ -501,13 +582,6 @@ def _unregister_revert(daemon: Daemon) -> None:
         pass
 
 
-__all__ = [
-    "Daemon",
-    "matrix_for",
-    "run",
-]
-
-
 def daemon_main() -> int:
     d = Daemon()
     try:
@@ -520,6 +594,17 @@ def daemon_main() -> int:
         logger.error(f"Daemon crashed with unhandled exception: {exc}", exc)
         _revert()
         return 1
+
+
+run = daemon_main
+
+
+__all__ = [
+    "Daemon",
+    "matrix_for",
+    "daemon_main",
+    "run",
+]
 
 
 if __name__ == "__main__":

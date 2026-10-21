@@ -7,7 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.1] - 2026-10-19
+## [1.0.4] - 2026-10-21
+
+### Fixed
+- **Daemon Transition Deadlock**: Converted `_transition_lock` to `threading.RLock()` and added generation tracking (`_transition_generation`) to prevent deadlocks when window messages or tray actions are dispatched mid-transition.
+- **Hardware State Restoration on Toggle**: Fixed `on_hotkey()` and tray toggle so disabling paper mode restores backlight and ClearType font smoothing without terminating the background daemon, allowing seamless two-way toggling.
+- **Hardware EEPROM Protection**: Skipped redundant no-op DDC/CI brightness writes and settling delays when the monitor is already at the target brightness level.
+- **Zero-CPU Idle Waiting**: Replaced 25 Hz busy-polling loop with `MsgWaitForMultipleObjects(..., QS_ALLINPUT)`, eliminating idle CPU usage while waking with sub-millisecond latency.
+- **State Journal Resilience**: Restricted `.corrupt` backup quarantine strictly to `ValueError` (corrupted JSON) rather than transient `OSError` (antivirus or file sharing locks). Added `flush()` and `os.fsync()` before atomic file replacement.
+- **Configuration Crash Resilience**: Added `TypeError` handling and safe numeric conversions in `config._validate()` to prevent crashes when values are `None` or invalid types. Added `utc_offset_hours` to default schema.
+- **Session-Only Font Smoothing**: Removed `SPIF_UPDATEINIFILE` from `winlib.set_font_smoothing_type()`, ensuring font smoothing modifications are session-bound and do not alter the user's permanent registry defaults.
+- **Multi-Monitor Fullscreen Detection**: Integrated `SHQueryUserNotificationState` and per-monitor geometry checks via `MonitorFromWindow`.
+- **Standalone Binary Packaging**: Added `--onefile` to `build_exe.py` and updated release workflow checksum generation for standard `sha256sum -c` compatibility.
+- **Exported Symbols (`__all__`)**: Corrected module exports across `color_matrix.py`, `paper_engine.py`, and `daemon.py`.
+
+### Changed
+- **Documentation & Color Calibration**: Replaced outdated prototype values in documentation with measured matrix outputs (Paper white `#EAC5A8`, Paper black `#15120F`), clarified paper-balanced luma weights, and refined scientific context.
+- **Test Suite**: Expanded test suite to 74 automated unit, reliability, and transactional tests with 100% pass rate.
+
+---
+
+## [1.0.3] - 2026-10-20
+
+### Added
+- **NOAA Astronomical Solar Circadian Engine (`circadian.py`)**: Computes exact astronomical sunrise and sunset times offline using Meeus solar geometry equations from system timezone or configured GPS coordinates.
+- **Amber Candle Preset**: 2200 K warm amber reading profile with significant blue-channel attenuation.
+- **Preset Cycling Hotkey**: Global hotkey `Ctrl+Alt+N` and CLI commands `paperscreen cycle` / `paperscreen next` to cycle presets on the fly.
+- **Hue-Preserving Inverted Paper**: Dark paper mode with cross-channel coupling designed to invert background/foreground luminance while maintaining chromatic syntax distinction.
+
+---
+
+## [1.0.2] - 2026-10-20
+
+### Fixed
+- **Tkinter Python 3.14 Compatibility**: Used list-based tracking for slider labels to resolve unhashable type issues in Python 3.14 runtime.
+- **Tray LOWORD Masking**: Masked `wparam & 0xFFFF` on `WM_COMMAND` dispatch to avoid integer overflow and missing attribute errors.
+
+---
 
 ### Added
 - **Visual Preferences & Calibration GUI (`settings_gui.py`)**: Zero-dependency Tkinter dialog for fine-tuning Kelvin, desaturation, black floor, white ceiling, contrast, circadian backlight targets, 20-20-20 breaks, and excluded apps with live instant preview.

@@ -65,8 +65,9 @@ $$\mathbf{P}_{\text{out}} = \begin{pmatrix} r & g & b & a & 1 \end{pmatrix} \cdo
 ### Tone Mapping & Paper Simulation Formulas
 For each output channel $c \in \{R, G, B\}$, with white-point chromaticity gains $g_c$ derived from Correlated Color Temperature ($K$):
 
-1. **Luminance Calculation (Rec. 709 weights)**:
+1. **Luminance Calculation (Paper-Balanced Weights)**:
    $$L = 0.34 \cdot r + 0.36 \cdot g + 0.30 \cdot b$$
+   *(Contrasting with broadcast Rec. 709 weights $0.2126, 0.7152, 0.0722$, which skew 71.5% to green; PaperScreen's balanced weights provide uniform perceived contrast across colored text and code syntax without green glare).*
 
 2. **Desaturation towards Luma**:
    $$x_c = (1 - d) \cdot \text{in}_c + d \cdot L$$
@@ -79,8 +80,9 @@ For each output channel $c \in \{R, G, B\}$, with white-point chromaticity gains
 4. **Paper Tone Mapping (Black Floor & White Ceiling)**:
    $$\text{out}_c = g_c \cdot \lambda \cdot \left[ \text{floor} + (\text{ceiling} - \text{floor}) \cdot y_c \right]$$
    where:
-   - $\text{floor} \approx 0.10$ lifts pure digital black (`#000000`) to soft charcoal (`#1E1C1A`).
-   - $\text{ceiling} \approx 0.92$ compresses pure digital white (`#FFFFFF`) to diffuse parchment (`#F3EBDD`).
+   - For standard `paper` ($\text{floor} = 0.10, \text{ceiling} = 0.90, k = 1.04, 4400\text{ K}$):
+     - Pure digital black (`#000000`) maps to soft charcoal (`#15120F`, RGB 21, 18, 15).
+     - Pure digital white (`#FFFFFF`) maps to warm tinted parchment (`#EAC5A8`, RGB 234, 197, 168).
    - $\lambda \in [0.05, 1.0]$ scales overall matrix output luminance without altering the monitor backlight's physical duty cycle (actual temporal modulation depends on panel firmware and hardware).
    - When neutral E-Ink (`eink`) is selected (100% desaturation, 6500 K), gains $g_c$ are strictly equal $(1.0, 1.0, 1.0)$, ensuring mathematically achromatic grayscale output ($R_{\text{out}} = G_{\text{out}} = B_{\text{out}}$).
 
@@ -145,8 +147,18 @@ if kernel32.GetLastError() == 183: # ERROR_ALREADY_EXISTS
     return 0 # Exit gracefully
 ```
 
+### Re-Entrant Transition Architecture
+Matrix transitions run on the main thread via `_lerp_apply()` to comply with the Windows Magnification API thread affinity constraint. Win32 messages are pumped during the transition loop (`PeekMessageW` / `DispatchMessageW`) to keep the UI and tray menu responsive:
+- Transitions are protected by a re-entrant `threading.RLock()`.
+- A monotonic generation counter (`_transition_generation`) detects when a newer command is issued while an earlier transition is animating, allowing the earlier transition to yield immediately without race conditions or target collisions.
+
+### Idle Wait & Message Dispatching
+Rather than busy-polling with frequent sleep intervals, the daemon waits using `MsgWaitForMultipleObjects(..., QS_ALLINPUT)`:
+- Consumes **0% CPU** during idle periods.
+- Wakes with sub-millisecond latency when global hotkeys, tray interactions, or power broadcast messages arrive.
+
 ### Cross-Process State Journal Locking
-All updates to `state.json` are synchronized using the Windows Named Mutex `Local\PaperScreenJournalMutex` and written via atomic file replacement (`MoveFileExW` / `os.replace`), preventing concurrent read-modify-write lost updates between the CLI and the background daemon.
+All updates to `state.json` are synchronized using the Windows Named Mutex `Local\PaperScreenJournalMutex` and written via atomic file replacement (`os.replace` after `f.flush()` and `os.fsync()`), ensuring persistence across processes without corruption.
 
 ---
 
@@ -157,11 +169,11 @@ Configuration is stored in `%APPDATA%\PaperScreen\config.json`:
 ```json
 {
   "preset": "paper",
-  "kelvin": 4600,
-  "desaturation": 0.35,
+  "kelvin": 4400,
+  "desaturation": 0.65,
   "black_floor": 0.10,
-  "white_ceiling": 0.92,
-  "contrast": 1.0,
+  "white_ceiling": 0.90,
+  "contrast": 1.04,
   "backlight_day": 60,
   "backlight_night": 30,
   "night_start_hour": 19,
@@ -175,6 +187,10 @@ Configuration is stored in `%APPDATA%\PaperScreen\config.json`:
   "hotkey_toggle": true,
   "night_dim_matrix": false,
   "auto_pause_fullscreen": false,
-  "excluded_apps": ["photoshop.exe", "figma.exe"]
+  "excluded_apps": [],
+  "solar_circadian": false,
+  "latitude": null,
+  "longitude": null,
+  "utc_offset_hours": null
 }
 ```

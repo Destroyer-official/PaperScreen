@@ -69,20 +69,30 @@ def state_path() -> str:
 
 def _load_unlocked() -> dict:
     p = state_path()
+    if not os.path.isfile(p):
+        return {}
     for attempt in range(3):
         try:
             with open(p, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return data if isinstance(data, dict) else {}
-        except (OSError, ValueError):
+        except (ValueError, json.JSONDecodeError):
             if attempt < 2:
                 time.sleep(0.05)
             elif os.path.isfile(p):
-                # Back up unparseable/corrupted state file so it does not block future runs
+                # Back up unparseable/corrupted JSON file so it does not block future runs
                 try:
                     os.replace(p, f"{p}.corrupt")
                 except OSError:
                     pass
+                return {}
+        except OSError:
+            # Transient OS error (e.g. sharing violation / antivirus lock)
+            # Never quarantine on transient I/O locks, preserve original state
+            if attempt < 2:
+                time.sleep(0.05)
+            else:
+                return {}
     return {}
 
 
@@ -110,6 +120,8 @@ def _save_unlocked(data: dict) -> None:
     try:
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
         os.replace(tmp, target)
     except Exception:
         if os.path.isfile(tmp):

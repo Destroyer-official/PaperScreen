@@ -161,6 +161,6 @@ def status() -> dict:
 
 __all__ = [
     "apply",
-    "revert",
+    "release",
     "status",
 ]

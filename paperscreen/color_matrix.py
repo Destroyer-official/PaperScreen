@@ -19,7 +19,8 @@ from typing import Dict, Sequence, Tuple
 Matrix = Tuple[Tuple[float, float, float, float, float], ...]
 
 LUMA_WEIGHTS: Dict[str, Sequence[float]] = {
-    # sRGB / Rec.709 luma weights
+    # Paper-balanced luma weights (0.34 R, 0.36 G, 0.30 B)
+    # Calibrated for reading comfort on emissive displays, avoiding the 71.5% green skew of standard Rec. 709.
     "paper": (0.34, 0.36, 0.30),
 }
 
@@ -275,13 +276,16 @@ def preset(name: str):
 __all__ = [
     "identity",
     "tint_gains",
-    "multiply",
+    "kelvin_to_rgb",
     "lerp_matrix",
     "ease",
+    "apply_matrix",
+    "is_achromatic",
     "paper_matrix",
     "inverted_paper_matrix",
     "preset",
     "PRESET_VALUES",
+    "LUMA_WEIGHTS",
 ]
 
 

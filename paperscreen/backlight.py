@@ -148,6 +148,11 @@ def set_brightness(level: int, remember: bool = True, rollback_on_failure: bool 
                     if prev is None:
                         report["failed"].append({"name": key, "reason": "read brightness failed"})
                         continue
+                    if prev == level:
+                        report["skipped"].append({"name": key, "reason": "already_at_level", "brightness": level})
+                        if remember and key not in previous_by_key:
+                            previous_by_key[key] = {"original": prev, "status": "active", "set_level": level}
+                        continue
                     if winlib.ddc_set_brightness(handle, level):
                         time.sleep(0.15)  # DDC write settling time for monitor microcontroller
                         report["set"].append({"name": key, "from": prev, "to": level, "method": "ddc"})
@@ -222,6 +227,11 @@ def restore() -> dict:
 
                 prev_val = _extract_original(entry)
                 if prev_val is not None:
+                    cur = winlib.ddc_get_brightness(handle)
+                    if cur == prev_val:
+                        report["restored"].append({"name": key, "to": prev_val, "method": "ddc", "skipped": "already_at_level"})
+                        restored_keys.add(key)
+                        continue
                     if winlib.ddc_set_brightness(handle, prev_val):
                         time.sleep(0.15)  # DDC write settling time
                         report["restored"].append({"name": key, "to": prev_val, "method": "ddc"})

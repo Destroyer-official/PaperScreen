@@ -101,6 +101,16 @@ def magnification() -> ctypes.WinDLL:
     return _mag
 
 
+_shell32: Optional[ctypes.WinDLL] = None
+
+
+def shell32() -> ctypes.WinDLL:
+    global _shell32
+    if _shell32 is None:
+        _shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    return _shell32
+
+
 # ---------------------------------------------------------------------------
 # Magnification API (color engine)
 # ---------------------------------------------------------------------------
@@ -368,9 +378,13 @@ def set_font_smoothing_type(value: int) -> bool:
     is passed by value as a pointer-sized integer (PVOID/ULONG_PTR), NOT as an indirect pointer.
     Passing a pointer reference causes Windows to fail with ERROR_INVALID_PARAMETER (res=0).
     Using ctypes.c_void_p ensures standard pointer-width integer dispatch across 32-bit and 64-bit builds.
+
+    We deliberately omit SPIF_UPDATEINIFILE so the change remains session-bound. If the application
+    crashes or the workstation reboots, Windows automatically defaults back to the user's permanent
+    registry settings, preventing stuck grayscale font smoothing.
     """
     ok = user32().SystemParametersInfoW(
-        SPI_SETFONTSMOOTHINGTYPE, 0, ctypes.c_void_p(int(value)), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE
+        SPI_SETFONTSMOOTHINGTYPE, 0, ctypes.c_void_p(int(value)), SPIF_SENDCHANGE
     )
     return bool(ok)
 
@@ -585,18 +599,33 @@ def get_advanced_color_info() -> List[dict]:
 # ---------------------------------------------------------------------------
 
 def is_foreground_fullscreen() -> bool:
-    """Check if the currently focused window is covering the full virtual desktop (e.g. game, movie)."""
+    """Check if the currently focused window is covering its display (e.g. game, movie).
+
+    Uses SHQueryUserNotificationState for direct OS-level D3D exclusive fullscreen detection,
+    with fallback to per-monitor boundary checking (properly handling multi-monitor topologies).
+    """
     if not IS_WINDOWS:
         return False
     try:
+        # 1) Direct shell notification state (detects full-screen Direct3D / exclusive games)
+        try:
+            s32 = shell32()
+            if hasattr(s32, "SHQueryUserNotificationState"):
+                p_state = wintypes.DWORD()
+                res = s32.SHQueryUserNotificationState(ctypes.byref(p_state))
+                # QUNS_BUSY = 2, QUNS_RUNNING_D3D_FULL_SCREEN = 3, QUNS_PRESENTATION_MODE = 4
+                if res == 0 and p_state.value in (2, 3, 4):
+                    return True
+        except Exception:
+            pass
+
+        # 2) Window geometry check against the monitor hosting the foreground window
         u32 = user32()
         u32.GetForegroundWindow.restype = wintypes.HWND
         u32.GetDesktopWindow.restype = wintypes.HWND
         u32.GetShellWindow.restype = wintypes.HWND
         u32.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
         u32.GetWindowRect.restype = wintypes.BOOL
-        u32.GetSystemMetrics.argtypes = [ctypes.c_int]
-        u32.GetSystemMetrics.restype = ctypes.c_int
 
         hwnd = u32.GetForegroundWindow()
         if not hwnd:
@@ -610,10 +639,23 @@ def is_foreground_fullscreen() -> bool:
         if not u32.GetWindowRect(hwnd, ctypes.byref(rect)):
             return False
 
-        sw = u32.GetSystemMetrics(0)  # SM_CXSCREEN
-        sh = u32.GetSystemMetrics(1)  # SM_CYSCREEN
         w = rect.right - rect.left
         h = rect.bottom - rect.top
+
+        # Query the specific monitor for this window (MONITOR_DEFAULTTONEAREST = 2)
+        if hasattr(u32, "MonitorFromWindow"):
+            hmon = u32.MonitorFromWindow(hwnd, 2)
+            if hmon:
+                mi = MONITORINFOEXW()
+                mi.cbSize = ctypes.sizeof(MONITORINFOEXW)
+                if u32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                    mw = mi.rcMonitor.right - mi.rcMonitor.left
+                    mh = mi.rcMonitor.bottom - mi.rcMonitor.top
+                    return w >= mw and h >= mh
+
+        # Fallback to primary screen metrics
+        sw = u32.GetSystemMetrics(0)  # SM_CXSCREEN
+        sh = u32.GetSystemMetrics(1)  # SM_CYSCREEN
         return w >= sw and h >= sh
     except Exception:
         return False

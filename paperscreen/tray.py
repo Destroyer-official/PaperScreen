@@ -406,7 +406,7 @@ class SystemTray:
         u32.AppendMenuW(h_presets, _p_flags("warm_reading"), CMD_PRESET_WARM_READING, "Warm Reading (3000 K)")
         u32.AppendMenuW(h_presets, _p_flags("eink"), CMD_PRESET_EINK, "E-Ink Monochrome (6500 K)")
         u32.AppendMenuW(h_presets, _p_flags("eink_warm"), CMD_PRESET_EINK_WARM, "E-Ink Warm Paperwhite (4000 K)")
-        u32.AppendMenuW(h_presets, _p_flags("amber_candle"), CMD_PRESET_AMBER_CANDLE, "Amber Candle / Daylight (2200 K)")
+        u32.AppendMenuW(h_presets, _p_flags("amber_candle"), CMD_PRESET_AMBER_CANDLE, "Amber Candle (2200 K)")
         u32.AppendMenuW(h_presets, _p_flags("nightpaper"), CMD_PRESET_NIGHTPAPER, "Night Paper (3200 K)")
         u32.AppendMenuW(h_presets, _p_flags("inverted_paper"), CMD_PRESET_INVERTED, "Smart Dark Paper (Hue-Preserving)")
         u32.AppendMenuW(h_presets, _p_flags("custom"), CMD_PRESET_CUSTOM, "Custom (Calibrated)")
