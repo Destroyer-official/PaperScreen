@@ -50,10 +50,11 @@ class SettingsWindow:
 
         self._init_vars()
         self._build_ui()
+        self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
         # Apply initial preview if live preview is enabled
         if self.var_live_preview.get():
-            self.root.after(100, self._apply_live_preview)
+            self._preview_timer = self.root.after(100, self._apply_live_preview)
 
     def _init_vars(self):
         j = signals.load()
@@ -301,11 +302,23 @@ class SettingsWindow:
             except Exception:
                 pass
 
-    def _on_close(self):
+    def destroy(self):
+        """Cancel any pending timers and release UI resources."""
         if self._preview_timer:
-            self.root.after_cancel(self._preview_timer)
+            try:
+                self.root.after_cancel(self._preview_timer)
+            except Exception:
+                pass
+            self._preview_timer = None
         if self._backlight_timer:
-            self.root.after_cancel(self._backlight_timer)
+            try:
+                self.root.after_cancel(self._backlight_timer)
+            except Exception:
+                pass
+            self._backlight_timer = None
+
+    def _on_close(self):
+        self.destroy()
 
         j = signals.load()
         if spawn.is_daemon_running():

@@ -45,7 +45,7 @@ jobs:
         if (-not $line.StartsWith($hash.Hash.ToLower())) { throw "Checksum verification mismatch" }
 
     - name: Create Release and Upload Asset
-      uses: softprops/action-gh-release@c062e08bd532870e20bd73abea3360c8502da14d # v2.0.8
+      uses: softprops/action-gh-release@v2
       with:
         files: |
           dist/PaperScreen.exe

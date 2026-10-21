@@ -475,39 +475,53 @@ class SettingsWindowTests(unittest.TestCase):
         self.patch_config.start()
         self.patch_signals.start()
         signals.clear()
+        cfg = dict(config.DEFAULTS)
+        cfg["live_preview"] = False
+        config.save(cfg)
         import tkinter as tk
         self.root = tk.Tk()
+        self.root.withdraw()
+        self.app = None
 
     def tearDown(self):
+        if self.app:
+            try:
+                self.app.destroy()
+            except Exception:
+                pass
+            self.app = None
         try:
+            self.root.update()
             self.root.destroy()
         except Exception:
             pass
         self.patch_signals.stop()
         self.patch_config.stop()
         self.tmpdir.cleanup()
+        import gc
+        gc.collect()
 
     def test_settings_window_initialization_and_matrix_computation(self):
         from paperscreen import settings_gui
-        app = settings_gui.SettingsWindow(self.root)
-        self.assertIsNotNone(app.var_preset.get())
-        m = app._compute_current_matrix()
+        self.app = settings_gui.SettingsWindow(self.root)
+        self.assertIsNotNone(self.app.var_preset.get())
+        m = self.app._compute_current_matrix()
         self.assertEqual(len(m), 5)
         self.assertEqual(len(m[0]), 5)
 
         # Changing sliders alters computed matrix
-        app.var_kelvin.set(2200)
-        app.var_desat.set(80.0)
-        m_warm = app._compute_current_matrix()
+        self.app.var_kelvin.set(2200)
+        self.app.var_desat.set(80.0)
+        m_warm = self.app._compute_current_matrix()
         self.assertNotEqual(m, m_warm)
 
     def test_settings_preset_selection_updates_sliders(self):
         from paperscreen import settings_gui
-        app = settings_gui.SettingsWindow(self.root)
-        app.var_preset.set("amber_candle")
-        app._on_preset_selected()
-        self.assertEqual(app.var_kelvin.get(), 2200)
-        self.assertEqual(app.var_desat.get(), 75.0)
+        self.app = settings_gui.SettingsWindow(self.root)
+        self.app.var_preset.set("amber_candle")
+        self.app._on_preset_selected()
+        self.assertEqual(self.app.var_kelvin.get(), 2200)
+        self.assertEqual(self.app.var_desat.get(), 75.0)
 
     @patch("paperscreen.spawn.is_daemon_running", return_value=True)
     @patch("paperscreen.winlib.user32")
@@ -516,8 +530,8 @@ class SettingsWindowTests(unittest.TestCase):
         mock_u32().FindWindowW.return_value = 12345
         mock_u32().PostMessageW.return_value = 1
 
-        app = settings_gui.SettingsWindow(self.root)
-        app._apply_live_preview()
+        self.app = settings_gui.SettingsWindow(self.root)
+        self.app._apply_live_preview()
 
         # Signals should contain preview_matrix
         j = signals.load()
@@ -529,8 +543,8 @@ class SettingsWindowTests(unittest.TestCase):
     @patch("paperscreen.winlib.mag_set_color_effect")
     def test_live_preview_in_process_when_daemon_stopped(self, mock_mag_set, mock_daemon):
         from paperscreen import settings_gui
-        app = settings_gui.SettingsWindow(self.root)
-        app._apply_live_preview()
+        self.app = settings_gui.SettingsWindow(self.root)
+        self.app._apply_live_preview()
         mock_mag_set.assert_called()
 
     @patch("paperscreen.paper_engine.apply")
@@ -538,8 +552,8 @@ class SettingsWindowTests(unittest.TestCase):
     def test_save_and_apply_starts_daemon_when_stopped(self, mock_daemon, mock_apply):
         from paperscreen import settings_gui
         with patch("tkinter.messagebox.showinfo"):
-            app = settings_gui.SettingsWindow(self.root)
-            app._save_and_apply()
+            self.app = settings_gui.SettingsWindow(self.root)
+            self.app._save_and_apply()
             mock_apply.assert_called_once()
 
 
