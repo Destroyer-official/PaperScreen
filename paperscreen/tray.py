@@ -77,6 +77,8 @@ def shell32() -> ctypes.WinDLL:
 # Menu Command IDs
 CMD_HEADER = 1000
 CMD_TOGGLE = 1001
+CMD_TURN_ON = 1002
+CMD_TURN_OFF = 1003
 
 CMD_PRESET_PAPER = 1010
 CMD_PRESET_SEPIA = 1011
@@ -518,6 +520,8 @@ __all__ = [
     "shell32",
     "CMD_HEADER",
     "CMD_TOGGLE",
+    "CMD_TURN_ON",
+    "CMD_TURN_OFF",
     "CMD_PRESET_PAPER",
     "CMD_PRESET_SEPIA",
     "CMD_PRESET_WARM_READING",

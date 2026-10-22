@@ -704,6 +704,28 @@ def get_foreground_process_name() -> str:
     return ""
 
 
+def find_tray_window() -> int:
+    """Find the HWND of the resident PaperScreen tray hidden window. Returns 0 if not found."""
+    if not IS_WINDOWS:
+        return 0
+    u32 = user32()
+    u32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+    u32.FindWindowW.restype = wintypes.HWND
+    hwnd = u32.FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
+    return int(hwnd) if hwnd else 0
+
+
+def post_tray_command(cmd_id: int) -> bool:
+    """Post a WM_COMMAND notification to the resident PaperScreen tray icon window."""
+    hwnd = find_tray_window()
+    if not hwnd:
+        return False
+    u32 = user32()
+    u32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+    u32.PostMessageW.restype = wintypes.BOOL
+    return bool(u32.PostMessageW(hwnd, 0x0111, cmd_id, 0))
+
+
 __all__ = [
     "IS_WINDOWS",
     "PaperAPIError",
@@ -733,6 +755,8 @@ __all__ = [
     "get_advanced_color_info",
     "is_foreground_fullscreen",
     "get_foreground_process_name",
+    "find_tray_window",
+    "post_tray_command",
 ]
 
 

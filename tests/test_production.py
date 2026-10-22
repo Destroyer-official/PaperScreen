@@ -150,6 +150,28 @@ class LoggerTests(unittest.TestCase):
                 self.assertIn("Test warning message", content)
                 self.assertIn("Test error message", content)
 
+    def test_logger_console_streaming_and_tracebacks(self):
+        import io
+        fake_stderr = io.StringIO()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with patch.object(logger, "config_dir", return_value=tmpdir):
+                with patch("sys.stderr", fake_stderr):
+                    logger.enable_console_logging(level="DEBUG")
+                    self.assertTrue(logger.is_console_logging_enabled())
+                    try:
+                        raise ValueError("Simulated crash")
+                    except ValueError as exc:
+                        logger.error("Crash encountered", exc)
+                    
+                    stderr_content = fake_stderr.getvalue()
+                    self.assertIn("Crash encountered", stderr_content)
+                    self.assertIn("ValueError: Simulated crash", stderr_content)
+                    self.assertIn("Traceback (most recent call last):", stderr_content)
+                    
+                    logger.disable_console_logging()
+                    self.assertFalse(logger.is_console_logging_enabled())
+
+
 
 class SignalsTests(unittest.TestCase):
     def test_signals_journal_lifecycle(self):

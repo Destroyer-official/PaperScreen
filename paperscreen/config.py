@@ -22,6 +22,7 @@ DEFAULTS = {
     "backlight_night": 30,
     "night_start_hour": 19,       # 24h local time; night preset applied after
     "night_end_hour": 7,
+    "invert_luminance": False,     # invert luminance (dark paper / light text)
     "grayscale_smoothing": False,  # ClearType -> grayscale while active
     "restore_backlight_on_exit": True,
     "breaks_enabled": True,
@@ -108,6 +109,7 @@ def _validate(cfg: dict) -> dict:
     out["backlight_night"] = _safe_int(out.get("backlight_night"), DEFAULTS["backlight_night"], 0, 100)
     out["night_start_hour"] = _safe_int(out.get("night_start_hour"), DEFAULTS["night_start_hour"], 0, 23)
     out["night_end_hour"] = _safe_int(out.get("night_end_hour"), DEFAULTS["night_end_hour"], 0, 23)
+    out["invert_luminance"] = bool(out.get("invert_luminance", False))
     out["grayscale_smoothing"] = bool(out.get("grayscale_smoothing"))
     out["restore_backlight_on_exit"] = bool(out.get("restore_backlight_on_exit", True))
     out["breaks_enabled"] = bool(out.get("breaks_enabled", True))

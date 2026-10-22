@@ -33,6 +33,11 @@ def main(argv=None) -> int:
         prog="paperscreen",
         description="Make your monitor behave like paper (Windows).",
     )
+    parser.add_argument(
+        "-v", "--verbose", "--debug",
+        action="store_true",
+        help="enable verbose debug logging to console",
+    )
     sub = parser.add_subparsers(dest="command", required=True)
 
     p_on = sub.add_parser("on", help="activate paper mode (runs daemon with system tray)")
@@ -82,6 +87,11 @@ def main(argv=None) -> int:
     sub.add_parser("daemon", help=argparse.SUPPRESS)
 
     args = parser.parse_args(argv)
+
+    if getattr(args, "verbose", False) or os.environ.get("PAPERSCREEN_DEBUG") in ("1", "true", "True"):
+        logger.enable_console_logging(level="DEBUG")
+    elif args.command == "settings":
+        logger.enable_console_logging(level="DEBUG")
 
     if args.command == "daemon":
         from . import daemon

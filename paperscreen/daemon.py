@@ -78,14 +78,22 @@ def matrix_for(preset: str, night: bool = False):
     elif preset in color_matrix.PRESETS:
         m = color_matrix.preset(preset)
     else:
-        m = color_matrix.paper_matrix(
-            kelvin=cfg["kelvin"],
-            desaturation=cfg["desaturation"],
-            black_floor=cfg["black_floor"],
-            white_ceiling=cfg["white_ceiling"],
-            contrast=cfg["contrast"],
-            luminance=0.85 if dim else 1.0,
-        )
+        if cfg.get("invert_luminance", False) or preset == "inverted_paper":
+            m = color_matrix.inverted_paper_matrix(
+                kelvin=cfg.get("kelvin", 4400),
+                desaturation=cfg.get("desaturation", 0.20),
+                black_floor=cfg.get("black_floor", 0.10),
+                white_ceiling=cfg.get("white_ceiling", 0.90),
+            )
+        else:
+            m = color_matrix.paper_matrix(
+                kelvin=cfg["kelvin"],
+                desaturation=cfg["desaturation"],
+                black_floor=cfg["black_floor"],
+                white_ceiling=cfg["white_ceiling"],
+                contrast=cfg["contrast"],
+                luminance=0.85 if dim else 1.0,
+            )
     return m
 
 
@@ -174,50 +182,64 @@ class Daemon:
 
     # ---------------- hotkey & menu handling ----------------
 
-    def on_hotkey(self) -> None:
+    def turn_on(self, preset: Optional[str] = None) -> None:
+        """Explicitly activate paper mode (deterministic, no race conditions)."""
         j = signals.load()
         cfg = config.load()
-        if j.get("active"):
-            # Toggling OFF: revert matrix, restore backlight & smoothing, mark journal paused
-            # Daemon remains running in tray so hotkey can toggle back ON.
-            _lerp_apply(color_matrix.identity())
-            if cfg.get("restore_backlight_on_exit", True):
-                try:
-                    backlight.restore()
-                except Exception as exc:
-                    logger.debug(f"Hotkey toggle-off backlight restore: {exc}")
+        p = preset or j.get("preset") or cfg.get("preset", "paper")
+        night = config.is_night()
+        target = matrix_for(p, night)
+        signals.update(active=True, preset=p, status="ready", preview_matrix=None)
+        _lerp_apply(target)
+        self.current_preset, self.current_night = p, night
+        self.last_matrix = target
+        level = cfg["backlight_night"] if night else cfg["backlight_day"]
+        try:
+            backlight.set_brightness(level)
+        except Exception as exc:
+            logger.debug(f"turn_on backlight set: {exc}", exc)
+        if cfg.get("grayscale_smoothing"):
             try:
-                cleartype.restore_previous()
+                cleartype.enable_grayscale_smoothing()
             except Exception as exc:
-                logger.debug(f"Hotkey toggle-off cleartype restore: {exc}")
-            signals.update(active=False, status="paused")
-            self.last_matrix = color_matrix.identity()
+                logger.debug(f"turn_on cleartype enable: {exc}", exc)
+        title = p.replace("_", " ").title()
+        if self.tray_icon:
+            self.tray_icon.update_tooltip(f"PaperScreen - Active: {title}", active=True)
+        logger.info(f"PaperScreen turned ON (preset: {title})")
+
+    def turn_off(self) -> None:
+        """Explicitly deactivate paper mode and restore display to neutral."""
+        cfg = config.load()
+        signals.update(active=False, status="paused", preview_matrix=None)
+        _lerp_apply(color_matrix.identity())
+        self.last_matrix = color_matrix.identity()
+        if cfg.get("restore_backlight_on_exit", True):
+            try:
+                backlight.restore()
+            except Exception as exc:
+                logger.debug(f"turn_off backlight restore: {exc}", exc)
+        try:
+            cleartype.restore_previous()
+        except Exception as exc:
+            logger.debug(f"turn_off cleartype restore: {exc}", exc)
+        if self.tray_icon:
+            self.tray_icon.update_tooltip("PaperScreen - Off", active=False)
+        logger.info("PaperScreen turned OFF")
+
+    def on_hotkey(self) -> None:
+        j = signals.load()
+        if j.get("active"):
+            self.turn_off()
             if self.tray_icon:
-                self.tray_icon.update_tooltip("PaperScreen - Off", active=False)
                 self.tray_icon.show_balloon("PaperScreen", "Paper mode turned off.")
             else:
                 toasts.show("PaperScreen", "Paper mode turned off.")
         else:
-            preset = j.get("preset") or cfg.get("preset", "paper")
-            night = config.is_night()
-            target = matrix_for(preset, night)
-            signals.update(active=True, preset=preset, status="ready")
-            _lerp_apply(target)
-            self.current_preset, self.current_night = preset, night
-            self.last_matrix = target
-            level = cfg["backlight_night"] if night else cfg["backlight_day"]
-            try:
-                backlight.set_brightness(level)
-            except Exception as exc:
-                logger.debug(f"Hotkey toggle-on backlight set: {exc}")
-            if cfg.get("grayscale_smoothing"):
-                try:
-                    cleartype.enable_grayscale_smoothing()
-                except Exception as exc:
-                    logger.debug(f"Hotkey toggle-on cleartype enable: {exc}")
-            title = preset.replace("_", " ").title()
+            self.turn_on()
+            p = signals.load().get("preset") or "paper"
+            title = p.replace("_", " ").title()
             if self.tray_icon:
-                self.tray_icon.update_tooltip(f"PaperScreen - Active: {title}", active=True)
                 self.tray_icon.show_balloon("PaperScreen", f"Paper mode active ({title}).")
             else:
                 toasts.show("PaperScreen", f"Paper mode active ({title}).")
@@ -245,6 +267,12 @@ class Daemon:
         """Handle context menu selections from the system tray."""
         if cmd_id == tray.CMD_TOGGLE:
             self.on_hotkey()
+
+        elif cmd_id == tray.CMD_TURN_ON:
+            self.turn_on()
+
+        elif cmd_id == tray.CMD_TURN_OFF:
+            self.turn_off()
 
         elif cmd_id == tray.CMD_HEADER:
             # Refresh current matrix (called after sleep/resume, display change, or settings save)
@@ -479,6 +507,10 @@ class Daemon:
                         self.stop.set()
                         break
 
+                    # While settings live preview is being tuned, do not overwrite the matrix
+                    if j.get("preview_matrix") is not None:
+                        continue
+
                     if j.get("active") is False:
                         # Daemon is paused/toggled off
                         if self.last_matrix != color_matrix.identity():
@@ -486,10 +518,6 @@ class Daemon:
                             self.last_matrix = color_matrix.identity()
                             if self.tray_icon:
                                 self.tray_icon.update_tooltip("PaperScreen - Off", active=False)
-                        continue
-
-                    # While settings live preview is being tuned, do not overwrite the matrix
-                    if j.get("preview_matrix") is not None:
                         continue
 
                     cfg = config.load()

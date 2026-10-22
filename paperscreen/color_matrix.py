@@ -263,6 +263,13 @@ def preset(name: str):
     if name == "custom":
         from . import config
         cfg = config.load()
+        if cfg.get("invert_luminance", False) or cfg.get("preset") == "inverted_paper":
+            return inverted_paper_matrix(
+                kelvin=cfg.get("kelvin", 4400),
+                desaturation=cfg.get("desaturation", 0.20),
+                black_floor=cfg.get("black_floor", 0.10),
+                white_ceiling=cfg.get("white_ceiling", 0.90),
+            )
         return paper_matrix(
             kelvin=cfg.get("kelvin", 4400),
             desaturation=cfg.get("desaturation", 0.65),

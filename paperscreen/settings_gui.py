@@ -21,7 +21,7 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Optional
 
-from . import backlight, cleartype, color_matrix, config, paper_engine, signals, spawn, tray, winlib
+from . import backlight, cleartype, color_matrix, config, logger, paper_engine, signals, spawn, tray, winlib
 
 
 class SettingsWindow:
@@ -64,8 +64,9 @@ class SettingsWindow:
         j = signals.load()
         is_running = spawn.is_daemon_running()
         cur_preset = (j.get("preset") if is_running else None) or self.cfg.get("preset", "paper")
+        is_inverted = (cur_preset == "inverted_paper") or bool(self.cfg.get("invert_luminance", False))
         self.var_preset = tk.StringVar(value=cur_preset)
-        self.var_invert = tk.BooleanVar(value=(cur_preset == "inverted_paper"))
+        self.var_invert = tk.BooleanVar(value=is_inverted)
 
         # Sliders from active config or preset values
         kelvin = self.cfg.get("kelvin", 4400)
@@ -210,7 +211,9 @@ class SettingsWindow:
             )
 
     def _toggle_engine(self):
-        if self._is_engine_active():
+        active = self._is_engine_active()
+        logger.info(f"Settings GUI: Toggle button clicked (currently active={active})")
+        if active:
             # Turn OFF
             if self._preview_timer:
                 try:
@@ -219,34 +222,31 @@ class SettingsWindow:
                     pass
                 self._preview_timer = None
 
-            # Revert display to neutral immediately
-            try:
-                winlib.mag_initialize()
-                winlib.mag_set_color_effect(color_matrix.identity())
-            except Exception:
-                pass
+            signals.update(active=False, preview_matrix=None)
 
             if spawn.is_daemon_running():
-                hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
-                if hwnd:
-                    winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_TOGGLE, 0)
-                else:
+                if not winlib.post_tray_command(tray.CMD_TURN_OFF):
                     paper_engine.release()
             else:
-                signals.update(active=False)
-
-            cfg = config.load()
-            if cfg.get("restore_backlight_on_exit", True):
                 try:
-                    backlight.restore()
-                except Exception:
-                    pass
-            try:
-                cleartype.restore_previous()
-            except Exception:
-                pass
+                    winlib.mag_initialize()
+                    winlib.mag_set_color_effect(color_matrix.identity())
+                    winlib.mag_uninitialize()
+                except Exception as exc:
+                    logger.debug(f"Direct reset to identity on turn-off failed: {exc}", exc)
 
-            self.root.after(50, self._refresh_status_header)
+                cfg = config.load()
+                if cfg.get("restore_backlight_on_exit", True):
+                    try:
+                        backlight.restore()
+                    except Exception as exc:
+                        logger.debug(f"Backlight restore on turn-off failed: {exc}", exc)
+                try:
+                    cleartype.restore_previous()
+                except Exception as exc:
+                    logger.debug(f"ClearType restore on turn-off failed: {exc}", exc)
+
+            self._refresh_status_header()
         else:
             # Turn ON
             signals.update(preview_matrix=None)
@@ -255,17 +255,19 @@ class SettingsWindow:
                 cur_preset = "inverted_paper"
                 self.var_preset.set("inverted_paper")
 
+            signals.update(active=True, preset=cur_preset)
+
             if spawn.is_daemon_running():
-                hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
-                if hwnd:
-                    signals.update(active=True, preset=cur_preset)
-                    winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_TOGGLE, 0)
-                else:
+                if not winlib.post_tray_command(tray.CMD_TURN_ON):
                     paper_engine.apply(preset=cur_preset, set_backlight=True)
             else:
+                try:
+                    winlib.mag_uninitialize()
+                except Exception:
+                    pass
                 paper_engine.apply(preset=cur_preset, set_backlight=True)
 
-            self.root.after(100, self._refresh_status_header)
+            self._refresh_status_header()
 
     def _build_display_tab(self, parent):
         # Preset Selector
@@ -342,9 +344,7 @@ class SettingsWindow:
                     pass
             elif spawn.is_daemon_running():
                 signals.update(preview_matrix=None)
-                hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
-                if hwnd:
-                    winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_HEADER, 0)
+                winlib.post_tray_command(tray.CMD_HEADER)
         else:
             self._schedule_live_preview()
 
@@ -388,19 +388,20 @@ class SettingsWindow:
         if not getattr(self, "var_live_preview", None) or not self.var_live_preview.get():
             return
         m = self._compute_current_matrix()
+        cur_p = self.var_preset.get()
+        logger.debug(f"Settings GUI: Applying live preview (preset={cur_p}, invert={self.var_invert.get()})")
         if spawn.is_daemon_running():
             # Daemon owns the Magnification API session: pass preview matrix via signals & IPC
             signals.update(preview_matrix=m)
-            hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
-            if hwnd:
-                winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_LIVE_PREVIEW, 0)
+            if not winlib.post_tray_command(tray.CMD_LIVE_PREVIEW):
+                logger.debug("Settings GUI: Daemon running but failed to post CMD_LIVE_PREVIEW")
         else:
             # Standalone GUI process: apply directly via local magnification session
             try:
                 winlib.mag_initialize()
                 winlib.mag_set_color_effect(m)
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warn(f"Settings GUI: Live preview direct apply failed: {exc}", exc)
 
     def destroy(self):
         """Cancel any pending timers and release UI resources."""
@@ -425,19 +426,17 @@ class SettingsWindow:
 
     def _on_close(self):
         self.destroy()
-
-        j = signals.load()
+        logger.info("Settings GUI: Window closed, releasing preview state")
         if spawn.is_daemon_running():
             signals.update(preview_matrix=None)
-            hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
-            if hwnd:
-                winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_HEADER, 0)
+            winlib.post_tray_command(tray.CMD_HEADER)
         elif not self._is_engine_active():
             try:
                 winlib.mag_initialize()
                 winlib.mag_set_color_effect(color_matrix.identity())
-            except Exception:
-                pass
+                winlib.mag_uninitialize()
+            except Exception as exc:
+                logger.debug(f"Settings GUI: Revert to identity on close failed: {exc}", exc)
         self.root.destroy()
 
     def _add_matrix_slider(self, parent, label_text, var, from_val, to_val, resolution, unit=""):
@@ -623,11 +622,14 @@ class SettingsWindow:
 
         # If daemon is running, update it via IPC; if not running, start it so settings persist!
         if spawn.is_daemon_running():
-            signals.update(preset=cfg["preset"], preview_matrix=None)
-            hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
-            if hwnd:
-                winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_HEADER, 0)
+            signals.update(preset=cfg["preset"], preview_matrix=None, active=True)
+            if not winlib.post_tray_command(tray.CMD_TURN_ON):
+                paper_engine.apply(preset=cfg["preset"], set_backlight=True)
         else:
+            try:
+                winlib.mag_uninitialize()
+            except Exception:
+                pass
             paper_engine.apply(preset=cfg["preset"], set_backlight=True)
 
         self._refresh_status_header()
@@ -637,6 +639,7 @@ class SettingsWindow:
         if messagebox.askyesno("PaperScreen", "Reset all settings to default factory values?", parent=self.root):
             config.save(dict(config.DEFAULTS))
             self.cfg = config.load()
+            logger.info("Settings GUI: Reset configuration to defaults")
             self._init_vars()
             self.root.destroy()
             open_settings_gui()
@@ -644,17 +647,33 @@ class SettingsWindow:
 
 def open_settings_gui() -> int:
     """Launch the Tkinter GUI dialog."""
+    logger.enable_console_logging(level="DEBUG")
+    logger.info("Initializing PaperScreen Settings GUI...")
     # High-DPI awareness must be set BEFORE any Tk window initialization
     try:
         from ctypes import windll
         windll.shcore.SetProcessDpiAwareness(1)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug(f"SetProcessDpiAwareness: {exc}", exc)
 
-    root = tk.Tk()
-    app = SettingsWindow(root)
-    root.mainloop()
-    return 0
+    try:
+        root = tk.Tk()
+    except Exception as exc:
+        logger.error(f"Failed to initialize Tkinter window: {exc}", exc)
+        return 1
+
+    def _tk_error_handler(exc_type, exc_val, exc_tb):
+        logger.error(f"Unhandled Tkinter callback exception: {exc_val}", exc_val)
+
+    root.report_callback_exception = _tk_error_handler
+
+    try:
+        app = SettingsWindow(root)
+        root.mainloop()
+        return 0
+    except Exception as exc:
+        logger.error(f"Settings GUI fatal crash: {exc}", exc)
+        return 1
 
 
 __all__ = [
