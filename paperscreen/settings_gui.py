@@ -45,6 +45,7 @@ class SettingsWindow:
         self.cfg = config.load()
         self._preview_timer: Optional[str] = None
         self._backlight_timer: Optional[str] = None
+        self._status_poll_timer: Optional[str] = None
         self._user_adjusting = True
         self._slider_labels = []
 
@@ -52,15 +53,19 @@ class SettingsWindow:
         self._build_ui()
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
 
-        # Apply initial preview if live preview is enabled
-        if self.var_live_preview.get():
+        # Apply initial preview ONLY if engine is currently active
+        if self._is_engine_active() and self.var_live_preview.get():
             self._preview_timer = self.root.after(100, self._apply_live_preview)
+
+        # Periodic status check keeps UI in sync with hotkey and tray actions
+        self._status_poll_timer = self.root.after(500, self._poll_status_header)
 
     def _init_vars(self):
         j = signals.load()
         is_running = spawn.is_daemon_running()
         cur_preset = (j.get("preset") if is_running else None) or self.cfg.get("preset", "paper")
         self.var_preset = tk.StringVar(value=cur_preset)
+        self.var_invert = tk.BooleanVar(value=(cur_preset == "inverted_paper"))
 
         # Sliders from active config or preset values
         kelvin = self.cfg.get("kelvin", 4400)
@@ -172,11 +177,24 @@ class SettingsWindow:
         )
         btn_reset.pack(side="right", padx=6)
 
+    def _is_engine_active(self) -> bool:
+        if not spawn.is_daemon_running():
+            return False
+        j = signals.load()
+        return bool(j.get("active", False))
+
+    def _poll_status_header(self):
+        try:
+            self._refresh_status_header()
+        except Exception:
+            pass
+        self._status_poll_timer = self.root.after(500, self._poll_status_header)
+
     def _refresh_status_header(self):
-        is_running = spawn.is_daemon_running()
-        if is_running:
+        active = self._is_engine_active()
+        if active:
             j = signals.load()
-            cur = j.get("preset", self.var_preset.get()).replace("_", " ").title()
+            cur = (j.get("preset") or self.var_preset.get()).replace("_", " ").title()
             self.lbl_status.config(text=f"● PaperScreen: ACTIVE ({cur})", fg=self.green_color)
             self.lbl_substatus.config(text="Resident background daemon active with native tray controls")
             self.btn_toggle_engine.config(
@@ -192,31 +210,83 @@ class SettingsWindow:
             )
 
     def _toggle_engine(self):
-        if spawn.is_daemon_running():
-            paper_engine.release()
-            self._refresh_status_header()
-            if not self.var_live_preview.get():
+        if self._is_engine_active():
+            # Turn OFF
+            if self._preview_timer:
                 try:
-                    winlib.mag_set_color_effect(color_matrix.identity())
+                    self.root.after_cancel(self._preview_timer)
                 except Exception:
                     pass
+                self._preview_timer = None
+
+            # Revert display to neutral immediately
+            try:
+                winlib.mag_initialize()
+                winlib.mag_set_color_effect(color_matrix.identity())
+            except Exception:
+                pass
+
+            if spawn.is_daemon_running():
+                hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
+                if hwnd:
+                    winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_TOGGLE, 0)
+                else:
+                    paper_engine.release()
+            else:
+                signals.update(active=False)
+
+            cfg = config.load()
+            if cfg.get("restore_backlight_on_exit", True):
+                try:
+                    backlight.restore()
+                except Exception:
+                    pass
+            try:
+                cleartype.restore_previous()
+            except Exception:
+                pass
+
+            self.root.after(50, self._refresh_status_header)
         else:
-            # Activate paper engine with current preset
-            m = self._compute_current_matrix()
+            # Turn ON
             signals.update(preview_matrix=None)
-            paper_engine.apply(preset=self.var_preset.get(), set_backlight=True)
-            self._refresh_status_header()
+            cur_preset = self.var_preset.get()
+            if getattr(self, "var_invert", None) and self.var_invert.get():
+                cur_preset = "inverted_paper"
+                self.var_preset.set("inverted_paper")
+
+            if spawn.is_daemon_running():
+                hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
+                if hwnd:
+                    signals.update(active=True, preset=cur_preset)
+                    winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_TOGGLE, 0)
+                else:
+                    paper_engine.apply(preset=cur_preset, set_backlight=True)
+            else:
+                paper_engine.apply(preset=cur_preset, set_backlight=True)
+
+            self.root.after(100, self._refresh_status_header)
 
     def _build_display_tab(self, parent):
         # Preset Selector
         row_preset = tk.Frame(parent, bg=self.card_color)
-        row_preset.pack(fill="x", pady=(0, 8))
+        row_preset.pack(fill="x", pady=(0, 6))
         tk.Label(row_preset, text="Active Preset:", font=("Segoe UI", 9, "bold"), bg=self.card_color, fg=self.text_color).pack(side="left")
 
         presets = ["paper", "sepia", "warm_reading", "eink", "eink_warm", "amber_candle", "nightpaper", "inverted_paper", "custom", "auto"]
         self.cb_preset = ttk.Combobox(row_preset, textvariable=self.var_preset, values=presets, state="readonly", width=18)
         self.cb_preset.pack(side="right")
         self.cb_preset.bind("<<ComboboxSelected>>", self._on_preset_selected)
+
+        # Invert / Dark Paper Mode checkbox
+        row_invert = tk.Frame(parent, bg=self.card_color)
+        row_invert.pack(fill="x", pady=(0, 6))
+        tk.Checkbutton(
+            row_invert, text="Invert Luminance (Dark Paper / Light Text)",
+            variable=self.var_invert, bg=self.card_color, activebackground=self.card_color,
+            font=("Segoe UI", 9), fg=self.text_color,
+            command=self._on_invert_toggled
+        ).pack(side="left")
 
         # Matrix tuning sliders
         self._add_matrix_slider(parent, "Color Temperature (Kelvin):", self.var_kelvin, 1000, 10000, 100, " K")
@@ -232,11 +302,16 @@ class SettingsWindow:
             preview_frame, text="Real-Time Display Preview (changes reflect immediately on monitor)",
             variable=self.var_live_preview, bg=self.card_color, activebackground=self.card_color,
             font=("Segoe UI", 9, "italic"), fg=self.accent_color,
-            command=self._schedule_live_preview
+            command=self._on_preview_checkbox_toggled
         ).pack(side="left")
 
     def _on_preset_selected(self, event=None):
         name = self.var_preset.get()
+        if name == "inverted_paper":
+            self.var_invert.set(True)
+        else:
+            self.var_invert.set(False)
+
         if name in color_matrix.PRESET_VALUES:
             self._user_adjusting = False
             vals = color_matrix.PRESET_VALUES[name]
@@ -249,6 +324,30 @@ class SettingsWindow:
             self._user_adjusting = True
         self._schedule_live_preview()
 
+    def _on_invert_toggled(self):
+        if self.var_invert.get():
+            self.var_preset.set("inverted_paper")
+        else:
+            if self.var_preset.get() == "inverted_paper":
+                self.var_preset.set("paper")
+        self._schedule_live_preview()
+
+    def _on_preview_checkbox_toggled(self):
+        if not self.var_live_preview.get():
+            if not self._is_engine_active():
+                try:
+                    winlib.mag_initialize()
+                    winlib.mag_set_color_effect(color_matrix.identity())
+                except Exception:
+                    pass
+            elif spawn.is_daemon_running():
+                signals.update(preview_matrix=None)
+                hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
+                if hwnd:
+                    winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_HEADER, 0)
+        else:
+            self._schedule_live_preview()
+
     def _update_all_slider_labels(self):
         for var, lbl, res, unit in self._slider_labels:
             val = var.get()
@@ -257,7 +356,8 @@ class SettingsWindow:
 
     def _compute_current_matrix(self):
         p = self.var_preset.get()
-        if p == "inverted_paper":
+        is_inverted = (p == "inverted_paper") or (getattr(self, "var_invert", None) and self.var_invert.get())
+        if is_inverted:
             return color_matrix.inverted_paper_matrix(
                 kelvin=float(self.var_kelvin.get()),
                 desaturation=float(self.var_desat.get()) / 100.0,
@@ -304,6 +404,12 @@ class SettingsWindow:
 
     def destroy(self):
         """Cancel any pending timers and release UI resources."""
+        if getattr(self, "_status_poll_timer", None):
+            try:
+                self.root.after_cancel(self._status_poll_timer)
+            except Exception:
+                pass
+            self._status_poll_timer = None
         if self._preview_timer:
             try:
                 self.root.after_cancel(self._preview_timer)
@@ -326,7 +432,7 @@ class SettingsWindow:
             hwnd = winlib.user32().FindWindowW("PaperScreenTrayClass", "PaperScreen Tray")
             if hwnd:
                 winlib.user32().PostMessageW(hwnd, 0x0111, tray.CMD_HEADER, 0)
-        elif not j.get("active"):
+        elif not self._is_engine_active():
             try:
                 winlib.mag_initialize()
                 winlib.mag_set_color_effect(color_matrix.identity())
@@ -349,8 +455,15 @@ class SettingsWindow:
         def _on_move(val):
             formatted = f"{float(val):.2f}" if isinstance(resolution, float) else f"{int(float(val))}"
             lbl_val.config(text=f"{formatted}{unit}")
-            if self._user_adjusting and self.var_preset.get() not in ("custom", ""):
-                self.var_preset.set("custom")
+            if self._user_adjusting:
+                cur = self.var_preset.get()
+                if cur == "inverted_paper" or (getattr(self, "var_invert", None) and self.var_invert.get()):
+                    # Stay on inverted_paper so customization remains inverted
+                    self.var_preset.set("inverted_paper")
+                    if getattr(self, "var_invert", None):
+                        self.var_invert.set(True)
+                elif cur not in ("custom", ""):
+                    self.var_preset.set("custom")
             self._schedule_live_preview()
 
         scale = tk.Scale(
@@ -464,7 +577,11 @@ class SettingsWindow:
     def _save_and_apply(self):
         # Build clean config dict
         cfg = dict(self.cfg)
-        cfg["preset"] = self.var_preset.get()
+        preset_name = self.var_preset.get()
+        if getattr(self, "var_invert", None) and self.var_invert.get():
+            preset_name = "inverted_paper"
+            self.var_preset.set("inverted_paper")
+        cfg["preset"] = preset_name
         cfg["kelvin"] = int(self.var_kelvin.get())
         cfg["desaturation"] = round(float(self.var_desat.get()) / 100.0, 4)
         cfg["black_floor"] = round(float(self.var_floor.get()) / 100.0, 4)

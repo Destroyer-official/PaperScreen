@@ -67,7 +67,12 @@ def matrix_for(preset: str, night: bool = False):
         if dim and "luminance" not in params:
             params["luminance"] = 0.85
         if preset == "inverted_paper":
-            m = color_matrix.inverted_paper_matrix(**params)
+            m = color_matrix.inverted_paper_matrix(
+                kelvin=cfg.get("kelvin", params.get("kelvin", 4400)),
+                desaturation=cfg.get("desaturation", params.get("desaturation", 0.20)),
+                black_floor=cfg.get("black_floor", params.get("black_floor", 0.10)),
+                white_ceiling=cfg.get("white_ceiling", params.get("white_ceiling", 0.90)),
+            )
         else:
             m = color_matrix.paper_matrix(**params)
     elif preset in color_matrix.PRESETS:

@@ -556,6 +556,45 @@ class SettingsWindowTests(unittest.TestCase):
             self.app._save_and_apply()
             mock_apply.assert_called_once()
 
+    def test_inverted_paper_customization_preserves_inverted_matrix(self):
+        from paperscreen import settings_gui
+        self.app = settings_gui.SettingsWindow(self.root)
+        self.app.var_preset.set("inverted_paper")
+        self.app._on_preset_selected()
+        self.assertTrue(self.app.var_invert.get())
+
+        # Inverted matrix maps white to dark
+        m_orig = self.app._compute_current_matrix()
+        w_orig = color_matrix.apply_matrix(m_orig, (1.0, 1.0, 1.0))
+        self.assertLess(max(w_orig), 0.20)
+
+        # Simulate moving a slider (e.g. changing kelvin or ceiling)
+        self.app.var_kelvin.set(3200)
+        self.app.var_ceiling.set(85.0)
+
+        # Ensure preset remains inverted_paper and does NOT revert to normal white paper
+        self.assertEqual(self.app.var_preset.get(), "inverted_paper")
+        m_custom = self.app._compute_current_matrix()
+        w_custom = color_matrix.apply_matrix(m_custom, (1.0, 1.0, 1.0))
+        self.assertLess(max(w_custom), 0.20)
+        self.assertNotEqual(m_orig, m_custom)
+
+    @patch("paperscreen.spawn.is_daemon_running", return_value=True)
+    @patch("paperscreen.winlib.user32")
+    @patch("paperscreen.winlib.mag_set_color_effect")
+    def test_toggle_engine_turns_off_and_reverts_to_identity(self, mock_mag_set, mock_u32, mock_daemon):
+        from paperscreen import settings_gui, tray
+        signals.update(active=True, preset="paper")
+        mock_u32().FindWindowW.return_value = 54321
+
+        self.app = settings_gui.SettingsWindow(self.root)
+        self.assertTrue(self.app._is_engine_active())
+
+        # Clicking toggle engine when active should turn OFF and revert matrix to identity
+        self.app._toggle_engine()
+        mock_mag_set.assert_called_with(color_matrix.identity())
+        mock_u32().PostMessageW.assert_called_with(54321, 0x0111, tray.CMD_TOGGLE, 0)
+
 
 class DaemonReliabilityTests(unittest.TestCase):
     def setUp(self):
