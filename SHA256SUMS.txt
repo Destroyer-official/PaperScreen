@@ -1,1 +1,3 @@
-d2f3c142f274f6b3b3b6a808327ebe172f7185db8a4c7e9d5278872ff84d0998  PaperScreen.exe
+# PaperScreen Official Release Digest (v1.0.4)
+# Generated and verified by GitHub Actions release workflow
+1a0cabfef63fa5c89f0b8af6d06dfec761fb10d18e06b342f7c2ba8b5594708f  PaperScreen.exe

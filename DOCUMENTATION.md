@@ -45,8 +45,8 @@ The Desktop Window Manager (DWM) in Windows 8, 10, and 11 exposes hardware-accel
 A key architectural trait of `MagSetFullscreenColorEffect` is that the color transform is **session-bound to the applying process**:
 1. When `paperscreen on` is executed, it spawns a detached resident daemon process (`paperscreen.daemon`).
 2. The daemon applies the matrix and holds the magnification session open.
-3. If the daemon process is gracefully stopped (`paperscreen off`) or forcefully killed (`taskkill /F`), DWM **automatically reverts the desktop color matrix back to neutral identity**.
-4. In addition, persistent hardware changes (such as DDC/WMI backlight and ClearType smoothing) are recorded transactionally in `%APPDATA%/PaperScreen/state.json`, guarded by a cross-process Windows Named Mutex (`Local\PaperScreenJournalMutex`). If an operation is interrupted or a monitor is temporarily offline, the record is retained until restoration succeeds, or can be repaired at any time via `paperscreen doctor --repair`.
+3. When the daemon process is gracefully stopped (`paperscreen off`), it restores the neutral identity matrix and exits cleanly. If the process terminates unexpectedly, DWM typically unloads the fullscreen magnifier effect; in addition, PaperScreen provides an independent emergency repair command (`paperscreen doctor --repair`) to clear any lingering driver transforms.
+4. In addition, persistent hardware changes (such as DDC/WMI backlight and ClearType smoothing) are recorded transactionally in `%APPDATA%/PaperScreen/state.json`, guarded by a cross-process Windows Named Mutex (`Local\PaperScreenJournalMutex`) that fails closed if acquisition is blocked or times out. If an operation is interrupted or a monitor is temporarily offline, the record is retained until restoration succeeds, or can be repaired at any time via `paperscreen doctor --repair`.
 
 ---
 
@@ -158,7 +158,7 @@ Rather than busy-polling with frequent sleep intervals, the daemon waits using `
 - Wakes with sub-millisecond latency when global hotkeys, tray interactions, or power broadcast messages arrive.
 
 ### Cross-Process State Journal Locking
-All updates to `state.json` are synchronized using the Windows Named Mutex `Local\PaperScreenJournalMutex` and written via atomic file replacement (`os.replace` after `f.flush()` and `os.fsync()`), ensuring persistence across processes without corruption.
+All updates to `state.json` are synchronized using the Windows Named Mutex `Local\PaperScreenJournalMutex` with explicit 64-bit handle types. Mutex acquisition fails closed (raising `TimeoutError` if another process holds the mutex beyond the 5.0-second safety deadline), and disk writes use atomic file replacement (`os.replace` after `f.flush()` and `os.fsync()`), preventing state file corruption or unsynchronized writes.
 
 ---
 

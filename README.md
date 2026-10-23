@@ -5,7 +5,7 @@ A lightweight, zero-dependency display comfort and paper-reading engine for Wind
 [![CI](https://github.com/Destroyer-official/PaperScreen/actions/workflows/ci.yml/badge.svg)](https://github.com/Destroyer-official/PaperScreen/actions)
 [![Release](https://img.shields.io/github/v/release/Destroyer-official/PaperScreen?include_prereleases&color=blue)](https://github.com/Destroyer-official/PaperScreen/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python: 3.10+](https://img.shields.io/badge/python-3.10+-brightgreen.svg)](https://www.python.org/)
+[![Python: 3.11+](https://img.shields.io/badge/python-3.11+-brightgreen.svg)](https://www.python.org/)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg)](https://www.microsoft.com/windows)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-0%20runtime%20pkgs-success.svg)](#zero-dependencies)
 
@@ -37,7 +37,7 @@ Emissive computer displays present high luminance contrast and saturated primari
 | `warm_reading` | ~3000 K | 55% | 0.12 | 0.84 | Extended PDF reading in dim ambient lighting |
 | `eink` | 6500 K | 100% | 0.08 | 0.92 | Achromatic monochrome grayscale ($R = G = B$) |
 | `eink_warm` | ~4000 K | 100% | 0.08 | 0.90 | Warm monochrome paperwhite simulation |
-| `amber_candle` | ~2200 K | 75% | 0.08 | 0.82 | Deep evening amber with strong blue attenuation (~75–90%) |
+| `amber_candle` | ~2200 K | 75% | 0.08 | 0.82 | Deep evening amber with strong digital blue attenuation (~75–90%) |
 | `nightpaper` | ~3200 K | 60% | 0.07 | 0.72 | Late-night work with software-level matrix dimming |
 | `inverted_paper` | ~4400 K | 20% | 0.10 | 0.90 | Dark paper mode preserving relative chromatic syntax contrast |
 | `custom` | Configurable | Configurable | Configurable | Configurable | Tuned via the visual calibration GUI (`--gui`) |
@@ -110,11 +110,11 @@ python -m paperscreen config --gui
 
 ## Reliability & Architecture
 
-- **Session-Bound Magnification Effect**: The Windows Magnification API color effect lives exclusively within the Desktop Window Manager (DWM) session. If the daemon process exits or is terminated, DWM automatically reverts the color transform back to neutral identity.
+- **Session-Bound Magnification Effect**: The Windows Magnification API color effect is maintained by the resident daemon process. When stopped or terminated, DWM automatically reverts the color transform back to neutral identity; manual repair (`paperscreen doctor --repair`) is provided as an emergency recovery path.
 - **Workstation Lock Isolation**: Listens for `WM_WTSSESSION_CHANGE` via Terminal Services (`wtsapi32.dll`) to reset transforms to neutral identity upon workstation lock (`Win+L`), preventing matrix leakage on the secure desktop or Windows Hello camera, and restoring active presets upon unlock.
 - **Re-Entrant Locking & Idle Waiting**: Transition routines use `threading.RLock()` and a monotonic generation counter to prevent deadlocks when tray events arrive during animations. The main loop uses `MsgWaitForMultipleObjects` to achieve **0% idle CPU utilization** while responding instantly to messages.
-- **Transactional State Journal**: Hardware brightness and font-smoothing states are recorded in `%APPDATA%\PaperScreen\state.json`, protected by a cross-process Windows Named Mutex (`Local\PaperScreenJournalMutex`). Atomic file replacement (`os.replace` after `os.fsync`) prevents corruption.
-- **Offline Solar Circadian Calculation**: When `solar_circadian = true`, sunrise and sunset times are computed locally using NOAA solar geometry algorithms (Meeus formulas) from your system timezone or configured coordinates, without external network requests.
+- **Fail-Closed Cross-Process State Journal**: Hardware brightness and font-smoothing states are recorded in `%APPDATA%\PaperScreen\state.json`, protected by a 64-bit cross-process Windows Named Mutex (`Local\PaperScreenJournalMutex`) that fails closed if acquisition is blocked or times out. Atomic file replacement (`os.replace` after `os.fsync`) prevents corruption.
+- **Offline Solar Circadian Calculation**: When `solar_circadian = true`, approximate sunrise and sunset times are computed locally using NOAA solar geometry algorithms (Meeus/Spencer formulas) from your system timezone or configured coordinates, without external network requests.
 - **Explorer Recovery**: Intercepts the `TaskbarCreated` broadcast message to restore the notification tray icon if `explorer.exe` restarts.
 
 ---
@@ -135,7 +135,7 @@ PaperScreen includes an automated test suite verifying matrix mathematics, circa
 pytest -v
 ```
 
-*74 automated tests, 100% pass rate.*
+*83 automated tests, 100% pass rate.*
 
 ---
 

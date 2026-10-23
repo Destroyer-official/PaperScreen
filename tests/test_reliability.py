@@ -275,6 +275,37 @@ class StateJournalConcurrencyTests(unittest.TestCase):
             self.assertIn(f"worker_{i}", final_state)
             self.assertEqual(final_state[f"worker_{i}"], i * 10)
 
+    def test_journal_lock_fails_closed_on_timeout(self):
+        """When the local lock is held by another thread, journal_lock must raise TimeoutError."""
+        acquired_event = threading.Event()
+        release_event = threading.Event()
+
+        def hold_lock():
+            with signals._LOCAL_LOCK:
+                acquired_event.set()
+                release_event.wait(timeout=2.0)
+
+        t = threading.Thread(target=hold_lock)
+        t.start()
+        acquired_event.wait(timeout=1.0)
+        try:
+            with self.assertRaises(TimeoutError):
+                with signals.journal_lock(timeout_seconds=0.05):
+                    self.fail("Critical section should never execute if lock acquisition timed out")
+        finally:
+            release_event.set()
+            t.join()
+
+    @patch("paperscreen.winlib.kernel32")
+    def test_journal_lock_fails_closed_on_win32_mutex_timeout(self, mock_k32):
+        """When Win32 Named Mutex times out (WAIT_TIMEOUT 0x102), journal_lock must fail closed."""
+        mock_kernel = mock_k32.return_value
+        mock_kernel.CreateMutexW.return_value = 0x12345678
+        mock_kernel.WaitForSingleObject.return_value = 0x00000102  # WAIT_TIMEOUT
+        with self.assertRaises(TimeoutError):
+            with signals.journal_lock(timeout_seconds=0.05):
+                self.fail("Must raise TimeoutError on WAIT_TIMEOUT")
+
 
 class ColorMatrixAchromaticAndGamutTests(unittest.TestCase):
     def test_eink_is_strictly_achromatic_across_inputs(self):
@@ -674,6 +705,37 @@ class DaemonReliabilityTests(unittest.TestCase):
         mock_set_bri.assert_called_once()
         j2 = signals.load()
         self.assertTrue(j2.get("active"))
+
+
+class FrozenExecutableRoutingTests(unittest.TestCase):
+    def test_breaks_run_detached_frozen_routing(self):
+        """In frozen PyInstaller build, break timer must invoke CLI subcommand, not -m."""
+        from paperscreen import breaks
+        with patch.object(breaks.sys, "frozen", True, create=True), \
+             patch.object(breaks.sys, "executable", "C:\\Program Files\\PaperScreen\\PaperScreen.exe"), \
+             patch("subprocess.Popen") as mock_popen:
+            breaks.run_detached(15, 30)
+            mock_popen.assert_called_once()
+            args = mock_popen.call_args[0][0]
+            self.assertEqual(args[0], "C:\\Program Files\\PaperScreen\\PaperScreen.exe")
+            self.assertNotIn("-m", args)
+            self.assertIn("break", args)
+            self.assertIn("--interval", args)
+            self.assertIn("15", args)
+
+    def test_cli_autostart_frozen_routing(self):
+        """In frozen build, autostart helper writes exe path with 'on' directly."""
+        from paperscreen import cli
+        with patch.object(cli.sys, "frozen", True, create=True), \
+             patch.object(cli.sys, "executable", "C:\\Program Files\\PaperScreen\\PaperScreen.exe"), \
+             patch("winreg.OpenKey"), \
+             patch("winreg.SetValueEx") as mock_setval, \
+             patch("winreg.CloseKey"):
+            cli.autostart(enable=True, disable=False)
+            mock_setval.assert_called_once()
+            val = mock_setval.call_args[0][4]
+            self.assertIn('"C:\\Program Files\\PaperScreen\\PaperScreen.exe" on', val)
+            self.assertNotIn("-m", val)
 
 
 if __name__ == "__main__":

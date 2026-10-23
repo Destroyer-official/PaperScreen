@@ -67,16 +67,93 @@ class MONITORINFOEXW(ctypes.Structure):
 # DLL loading (lazy so import on non-Windows doesn't explode)
 # ---------------------------------------------------------------------------
 
+_kernel32: Optional[ctypes.WinDLL] = None
 _user32: Optional[ctypes.WinDLL] = None
 _dxva2: Optional[ctypes.WinDLL] = None
 _mag: Optional[ctypes.WinDLL] = None
 _gdi32: Optional[ctypes.WinDLL] = None
+_shell32: Optional[ctypes.WinDLL] = None
+
+
+def kernel32() -> ctypes.WinDLL:
+    global _kernel32
+    if _kernel32 is None:
+        _kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        _kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
+        _kernel32.CreateMutexW.restype = wintypes.HANDLE
+        _kernel32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+        _kernel32.OpenMutexW.restype = wintypes.HANDLE
+        _kernel32.ReleaseMutex.argtypes = [wintypes.HANDLE]
+        _kernel32.ReleaseMutex.restype = wintypes.BOOL
+        _kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+        _kernel32.WaitForSingleObject.restype = wintypes.DWORD
+        _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        _kernel32.CloseHandle.restype = wintypes.BOOL
+        _kernel32.GetLastError.argtypes = []
+        _kernel32.GetLastError.restype = wintypes.DWORD
+        _kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
+        _kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+        if hasattr(_kernel32, "GetTickCount64"):
+            _kernel32.GetTickCount64.argtypes = []
+            _kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+        _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        _kernel32.OpenProcess.restype = wintypes.HANDLE
+        _kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        _kernel32.GetExitCodeProcess.restype = wintypes.BOOL
+        if hasattr(_kernel32, "QueryFullProcessImageNameW"):
+            _kernel32.QueryFullProcessImageNameW.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR, ctypes.POINTER(wintypes.DWORD)]
+            _kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    return _kernel32
 
 
 def user32() -> ctypes.WinDLL:
     global _user32
     if _user32 is None:
         _user32 = ctypes.WinDLL("user32", use_last_error=True)
+        _user32.GetDC.argtypes = [wintypes.HWND]
+        _user32.GetDC.restype = wintypes.HDC
+        _user32.ReleaseDC.argtypes = [wintypes.HWND, wintypes.HDC]
+        _user32.ReleaseDC.restype = ctypes.c_int
+        _user32.GetLastInputInfo.argtypes = [ctypes.c_void_p]
+        _user32.GetLastInputInfo.restype = wintypes.BOOL
+        _user32.GetCursorPos.argtypes = [ctypes.POINTER(wintypes.POINT)]
+        _user32.GetCursorPos.restype = wintypes.BOOL
+        _user32.CreateIconIndirect.argtypes = [ctypes.c_void_p]
+        _user32.CreateIconIndirect.restype = wintypes.HICON
+        _user32.DestroyIcon.argtypes = [wintypes.HICON]
+        _user32.DestroyIcon.restype = wintypes.BOOL
+        _user32.RegisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int, wintypes.UINT, wintypes.UINT]
+        _user32.RegisterHotKey.restype = wintypes.BOOL
+        _user32.UnregisterHotKey.argtypes = [wintypes.HWND, ctypes.c_int]
+        _user32.UnregisterHotKey.restype = wintypes.BOOL
+        _user32.FindWindowW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR]
+        _user32.FindWindowW.restype = wintypes.HWND
+        _user32.PostMessageW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        _user32.PostMessageW.restype = wintypes.BOOL
+        _user32.SetForegroundWindow.argtypes = [wintypes.HWND]
+        _user32.SetForegroundWindow.restype = wintypes.BOOL
+        _user32.TrackPopupMenu.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_int, ctypes.c_int, ctypes.c_int, wintypes.HWND, ctypes.c_void_p]
+        _user32.TrackPopupMenu.restype = wintypes.BOOL
+        _user32.CreatePopupMenu.argtypes = []
+        _user32.CreatePopupMenu.restype = wintypes.HMENU
+        _user32.DestroyMenu.argtypes = [wintypes.HMENU]
+        _user32.DestroyMenu.restype = wintypes.BOOL
+        _user32.AppendMenuW.argtypes = [wintypes.HMENU, wintypes.UINT, ctypes.c_size_t, wintypes.LPCWSTR]
+        _user32.AppendMenuW.restype = wintypes.BOOL
+        _user32.DefWindowProcW.argtypes = [wintypes.HWND, wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM]
+        _user32.DefWindowProcW.restype = ctypes.c_ssize_t
+        _user32.PostQuitMessage.argtypes = [ctypes.c_int]
+        _user32.PostQuitMessage.restype = None
+        _user32.DestroyWindow.argtypes = [wintypes.HWND]
+        _user32.DestroyWindow.restype = wintypes.BOOL
+        _user32.RegisterClassExW.argtypes = [ctypes.c_void_p]
+        _user32.RegisterClassExW.restype = wintypes.ATOM
+        _user32.CreateWindowExW.argtypes = [
+            wintypes.DWORD, wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.DWORD,
+            ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+            wintypes.HWND, wintypes.HMENU, wintypes.HINSTANCE, wintypes.LPVOID,
+        ]
+        _user32.CreateWindowExW.restype = wintypes.HWND
     return _user32
 
 
@@ -84,6 +161,20 @@ def gdi32() -> ctypes.WinDLL:
     global _gdi32
     if _gdi32 is None:
         _gdi32 = ctypes.WinDLL("gdi32", use_last_error=True)
+        _gdi32.CreateCompatibleDC.argtypes = [wintypes.HDC]
+        _gdi32.CreateCompatibleDC.restype = wintypes.HDC
+        _gdi32.DeleteDC.argtypes = [wintypes.HDC]
+        _gdi32.DeleteDC.restype = wintypes.BOOL
+        _gdi32.DeleteObject.argtypes = [wintypes.HGDIOBJ]
+        _gdi32.DeleteObject.restype = wintypes.BOOL
+        _gdi32.CreateDIBSection.argtypes = [wintypes.HDC, ctypes.c_void_p, wintypes.UINT, ctypes.POINTER(ctypes.c_void_p), wintypes.HANDLE, wintypes.DWORD]
+        _gdi32.CreateDIBSection.restype = wintypes.HBITMAP
+        _gdi32.CreateDCW.argtypes = [wintypes.LPCWSTR, wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_void_p]
+        _gdi32.CreateDCW.restype = wintypes.HDC
+        _gdi32.GetDeviceGammaRamp.argtypes = [wintypes.HDC, ctypes.c_void_p]
+        _gdi32.GetDeviceGammaRamp.restype = wintypes.BOOL
+        _gdi32.SetDeviceGammaRamp.argtypes = [wintypes.HDC, ctypes.c_void_p]
+        _gdi32.SetDeviceGammaRamp.restype = wintypes.BOOL
     return _gdi32
 
 
@@ -99,9 +190,6 @@ def magnification() -> ctypes.WinDLL:
     if _mag is None:
         _mag = ctypes.WinDLL("Magnification", use_last_error=True)
     return _mag
-
-
-_shell32: Optional[ctypes.WinDLL] = None
 
 
 def shell32() -> ctypes.WinDLL:
@@ -755,6 +843,12 @@ __all__ = [
     "get_advanced_color_info",
     "is_foreground_fullscreen",
     "get_foreground_process_name",
+    "kernel32",
+    "user32",
+    "gdi32",
+    "dxva2",
+    "magnification",
+    "shell32",
     "find_tray_window",
     "post_tray_command",
 ]

@@ -39,11 +39,10 @@ def _acquire_lock() -> bool:
     global _breaks_mutex_handle
     if sys.platform == "win32":
         try:
-            import ctypes
-            from ctypes import wintypes
-            k32 = ctypes.windll.kernel32
+            from . import winlib
+            k32 = winlib.kernel32()
             ERROR_ALREADY_EXISTS = 183
-            h = k32.CreateMutexW(None, wintypes.BOOL(True), wintypes.LPCWSTR(_BREAKS_MUTEX_NAME))
+            h = k32.CreateMutexW(None, True, _BREAKS_MUTEX_NAME)
             if not h or k32.GetLastError() == ERROR_ALREADY_EXISTS:
                 if h:
                     k32.CloseHandle(h)
@@ -67,9 +66,9 @@ def _release_lock() -> None:
     global _breaks_mutex_handle
     if _breaks_mutex_handle:
         try:
-            import ctypes
-            ctypes.windll.kernel32.ReleaseMutex(_breaks_mutex_handle)
-            ctypes.windll.kernel32.CloseHandle(_breaks_mutex_handle)
+            from . import winlib
+            winlib.kernel32().ReleaseMutex(_breaks_mutex_handle)
+            winlib.kernel32().CloseHandle(_breaks_mutex_handle)
         except Exception:
             pass
         _breaks_mutex_handle = None
@@ -90,7 +89,7 @@ def _user_idle_seconds() -> float:
 
         info = LASTINPUTINFO()
         info.cb = ctypes.sizeof(LASTINPUTINFO)
-        if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
+        if winlib.user32().GetLastInputInfo(ctypes.byref(info)):
             # dwTime is 32-bit tick count from GetTickCount; compare modulo 2^32 or with tick64
             now_tick = winlib.get_tick_count_64() & 0xFFFFFFFF
             millis = (now_tick - info.dwTime) & 0xFFFFFFFF
@@ -152,22 +151,33 @@ def run(interval_minutes: int = 20, duration_seconds: int = 20,
 
 
 def run_detached(interval_minutes: int, duration_seconds: int) -> int:
-    """Spawn a detached break timer via pythonw (no console flash)."""
-    import sys as _sys
+    """Spawn a detached break timer via pythonw or frozen executable (no console flash)."""
+    if getattr(sys, "frozen", False):
+        exe = sys.executable
+        args = [
+            exe, "break",
+            "--interval", str(interval_minutes),
+            "--duration", str(duration_seconds),
+            "--console-quiet",
+        ]
+        cwd = os.path.dirname(sys.executable)
+    else:
+        pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        exe = pythonw if os.path.isfile(pythonw) else sys.executable
+        args = [
+            exe, "-m", "paperscreen", "break",
+            "--interval", str(interval_minutes),
+            "--duration", str(duration_seconds),
+            "--console-quiet",
+        ]
+        cwd = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    args = [
-        _sys.executable, "-m", "paperscreen.breaks",
-        str(interval_minutes), str(duration_seconds), "--console-quiet",
-    ]
-    pythonw = os.path.join(os.path.dirname(_sys.executable), "pythonw.exe")
-    if os.path.isfile(pythonw):
-        args[0] = pythonw
     try:
         subprocess.Popen(
             args,
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) | getattr(subprocess, "DETACHED_PROCESS", 0),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-            cwd=os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            cwd=cwd,
         )
         return 0
     except OSError:

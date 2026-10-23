@@ -77,6 +77,21 @@ def _safe_float(val, default: float, lo: float | None = None, hi: float | None =
         return default
 
 
+def _safe_bool(val, default: bool = False) -> bool:
+    """Strictly evaluate boolean values without treating truthy strings like 'false' as True."""
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return bool(val)
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in ("true", "1", "yes", "on", "t"):
+            return True
+        if s in ("false", "0", "no", "off", "f"):
+            return False
+    return default
+
+
 def _validate(cfg: dict) -> dict:
     out = dict(DEFAULTS)
     if not isinstance(cfg, dict):
@@ -109,21 +124,21 @@ def _validate(cfg: dict) -> dict:
     out["backlight_night"] = _safe_int(out.get("backlight_night"), DEFAULTS["backlight_night"], 0, 100)
     out["night_start_hour"] = _safe_int(out.get("night_start_hour"), DEFAULTS["night_start_hour"], 0, 23)
     out["night_end_hour"] = _safe_int(out.get("night_end_hour"), DEFAULTS["night_end_hour"], 0, 23)
-    out["invert_luminance"] = bool(out.get("invert_luminance", False))
-    out["grayscale_smoothing"] = bool(out.get("grayscale_smoothing"))
-    out["restore_backlight_on_exit"] = bool(out.get("restore_backlight_on_exit", True))
-    out["breaks_enabled"] = bool(out.get("breaks_enabled", True))
+    out["invert_luminance"] = _safe_bool(out.get("invert_luminance"), DEFAULTS["invert_luminance"])
+    out["grayscale_smoothing"] = _safe_bool(out.get("grayscale_smoothing"), DEFAULTS["grayscale_smoothing"])
+    out["restore_backlight_on_exit"] = _safe_bool(out.get("restore_backlight_on_exit"), DEFAULTS["restore_backlight_on_exit"])
+    out["breaks_enabled"] = _safe_bool(out.get("breaks_enabled"), DEFAULTS["breaks_enabled"])
     out["break_interval_minutes"] = _safe_int(out.get("break_interval_minutes"), DEFAULTS["break_interval_minutes"], 1, 60)
     out["break_duration_seconds"] = _safe_int(out.get("break_duration_seconds"), DEFAULTS["break_duration_seconds"], 5, 120)
     out["smooth_transition_ms"] = _safe_int(out.get("smooth_transition_ms"), DEFAULTS["smooth_transition_ms"], 0, 10000)
-    out["hotkey_toggle"] = bool(out.get("hotkey_toggle", True))
-    out["night_dim_matrix"] = bool(out.get("night_dim_matrix", False))
-    out["auto_pause_fullscreen"] = bool(out.get("auto_pause_fullscreen", False))
+    out["hotkey_toggle"] = _safe_bool(out.get("hotkey_toggle"), DEFAULTS["hotkey_toggle"])
+    out["night_dim_matrix"] = _safe_bool(out.get("night_dim_matrix"), DEFAULTS["night_dim_matrix"])
+    out["auto_pause_fullscreen"] = _safe_bool(out.get("auto_pause_fullscreen"), DEFAULTS["auto_pause_fullscreen"])
     if isinstance(out.get("excluded_apps"), list):
         out["excluded_apps"] = [str(a).lower().strip() for a in out["excluded_apps"] if str(a).strip()]
     else:
         out["excluded_apps"] = []
-    out["solar_circadian"] = bool(out.get("solar_circadian", False))
+    out["solar_circadian"] = _safe_bool(out.get("solar_circadian"), DEFAULTS["solar_circadian"])
     if out.get("latitude") is not None:
         try:
             out["latitude"] = min(90.0, max(-90.0, float(out["latitude"])))

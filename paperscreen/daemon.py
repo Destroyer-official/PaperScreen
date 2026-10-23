@@ -368,7 +368,10 @@ class Daemon:
         elif cmd_id == tray.CMD_DOCTOR:
             hdr_info = winlib.get_advanced_color_info()
             hdr_str = "HDR enabled" if any(h.get("hdr_enabled") for h in hdr_info) else "SDR (normal)"
-            msg = f"Mode: {self.current_preset or 'paper'}\nDisplay: {hdr_str}\nStatus: Optimal"
+            j = signals.load()
+            has_failed = bool(j.get("backlight_failed") or j.get("status") == "failed")
+            status_str = "Degraded (Hardware Warnings)" if has_failed else "Optimal"
+            msg = f"Mode: {self.current_preset or 'paper'}\nDisplay: {hdr_str}\nStatus: {status_str}"
             if self.tray_icon:
                 self.tray_icon.show_balloon("PaperScreen Diagnostics", msg)
 
@@ -414,7 +417,7 @@ class Daemon:
     def run(self) -> int:
         logger.info(f"Daemon.run() invoked on PID {os.getpid()}")
         # OS-level single instance check
-        k32 = ctypes.windll.kernel32
+        k32 = winlib.kernel32()
         DAEMON_MUTEX_NAME = "Local\\PaperScreenDaemonSingleInstanceMutex"
         h_mutex = k32.CreateMutexW(None, True, DAEMON_MUTEX_NAME)
         err = k32.GetLastError()
@@ -427,7 +430,13 @@ class Daemon:
             return 0
 
         # Initialize Magnification API strictly on this main thread
-        winlib.mag_initialize()
+        if not winlib.mag_initialize():
+            logger.error("winlib.mag_initialize() failed on main thread")
+            signals.update(pid=None, active=False, status="failed")
+            if h_mutex:
+                k32.ReleaseMutex(h_mutex)
+                k32.CloseHandle(h_mutex)
+            return 1
 
         j = signals.load()
         preset = j.get("preset") or config.load()["preset"]
@@ -444,6 +453,12 @@ class Daemon:
             logger.info(f"Initial matrix applied for preset: {preset}")
         except Exception as exc:
             logger.error(f"Failed initial matrix apply: {exc}")
+            signals.update(pid=None, active=False, status="failed")
+            if h_mutex:
+                k32.ReleaseMutex(h_mutex)
+                k32.CloseHandle(h_mutex)
+            return 1
+
         self.current_preset, self.current_night = preset, night
         atexit.register(_revert)
         signals.update(pid=os.getpid(), active=True, status="ready")

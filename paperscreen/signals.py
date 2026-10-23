@@ -25,26 +25,31 @@ _LOCAL_LOCK = threading.RLock()
 
 @contextlib.contextmanager
 def journal_lock(timeout_seconds: float = 5.0) -> Iterator[None]:
-    """Acquire cross-process (and cross-thread) lock on the state journal."""
-    acquired = False
-    h_mutex = None
+    """Acquire cross-process (and cross-thread) lock on the state journal.
 
-    # First acquire in-process lock
+    Fails closed: raises TimeoutError if lock cannot be acquired within timeout.
+    """
+    h_mutex = None
+    acquired = False
+
+    # First acquire in-process re-entrant lock
     if not _LOCAL_LOCK.acquire(timeout=timeout_seconds):
-        yield
-        return
+        raise TimeoutError(f"Could not acquire in-process journal lock within {timeout_seconds}s")
 
     try:
         if sys.platform == "win32":
-            import ctypes
+            from . import winlib
             from ctypes import wintypes
-            k32 = ctypes.windll.kernel32
+            k32 = winlib.kernel32()
             timeout_ms = int(timeout_seconds * 1000)
             h_mutex = k32.CreateMutexW(None, False, JOURNAL_MUTEX_NAME)
-            if h_mutex:
-                # 0x00000000 = WAIT_OBJECT_0, 0x00000080 = WAIT_ABANDONED (previous owner terminated)
-                res = k32.WaitForSingleObject(h_mutex, wintypes.DWORD(timeout_ms))
-                acquired = res in (0x00000000, 0x00000080)
+            if not h_mutex:
+                raise TimeoutError("CreateMutexW failed to create/open journal mutex")
+            # 0x00000000 = WAIT_OBJECT_0, 0x00000080 = WAIT_ABANDONED
+            res = k32.WaitForSingleObject(h_mutex, wintypes.DWORD(timeout_ms))
+            if res not in (0x00000000, 0x00000080):
+                raise TimeoutError(f"WaitForSingleObject on journal mutex timed out or failed (code 0x{res:X})")
+            acquired = True
         else:
             acquired = True
 
@@ -53,11 +58,11 @@ def journal_lock(timeout_seconds: float = 5.0) -> Iterator[None]:
         if sys.platform == "win32" and h_mutex:
             if acquired:
                 try:
-                    ctypes.windll.kernel32.ReleaseMutex(h_mutex)
+                    winlib.kernel32().ReleaseMutex(h_mutex)
                 except Exception:
                     pass
             try:
-                ctypes.windll.kernel32.CloseHandle(h_mutex)
+                winlib.kernel32().CloseHandle(h_mutex)
             except Exception:
                 pass
         _LOCAL_LOCK.release()

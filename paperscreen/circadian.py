@@ -1,13 +1,14 @@
 """Astronomical Solar Circadian Engine (pure Python, zero dependencies).
 
-Computes exact astronomical sunrise, sunset, and solar noon using NOAA's
-solar geometry algorithms (Spencer / Meeus formulas). Allows PaperScreen to
-automatically synchronize color temperature and paper modes with the true
-sunlight cycle at the user's location.
+Computes approximate astronomical sunrise, sunset, and solar noon using NOAA's
+solar geometry algorithms (Spencer formulas). Designed to automatically synchronize
+display color temperature and paper presets with the natural daylight cycle within
+a typical +/- 2-3 minute tolerance for display scheduling purposes.
 """
 
 from __future__ import annotations
 
+import calendar
 import datetime
 import math
 from typing import Dict, Optional, Tuple
@@ -19,7 +20,11 @@ def calculate_solar_times(
     date: Optional[datetime.date] = None,
     utc_offset_hours: Optional[float] = None,
 ) -> Dict[str, Optional[datetime.time] | float | bool]:
-    """Calculate astronomical sunrise, sunset, solar noon, and day length."""
+    """Calculate approximate astronomical sunrise, sunset, solar noon, and day length.
+    
+    Uses NOAA solar geometry formulas. Accuracy is typically within 1-3 minutes
+    of authoritative ephemerides, assuming standard atmospheric refraction (90.833° zenith).
+    """
     if date is None:
         date = datetime.date.today()
     if utc_offset_hours is None:
@@ -30,9 +35,10 @@ def calculate_solar_times(
             utc_offset_hours = 0.0
 
     day_of_year = date.timetuple().tm_yday
+    days_in_year = 366.0 if calendar.isleap(date.year) else 365.0
 
     # Fractional year in radians
-    gamma = 2.0 * math.pi / 365.0 * (day_of_year - 1 + (12.0 - 12.0) / 24.0)
+    gamma = 2.0 * math.pi / days_in_year * (day_of_year - 1 + (12.0 - 12.0) / 24.0)
 
     # Equation of time in minutes
     eqtime = 229.18 * (

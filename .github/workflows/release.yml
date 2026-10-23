@@ -44,8 +44,13 @@ jobs:
         $line = (Get-Content dist/SHA256SUMS.txt).Trim()
         if (-not $line.StartsWith($hash.Hash.ToLower())) { throw "Checksum verification mismatch" }
 
+    - name: Generate build provenance attestation
+      uses: actions/attest-build-provenance@c074443f1ecf4024c9355490e854ec98fdd50f02 # v2.2.3
+      with:
+        subject-path: 'dist/PaperScreen.exe'
+
     - name: Create Release and Upload Asset
-      uses: softprops/action-gh-release@v2
+      uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
       with:
         files: |
           dist/PaperScreen.exe

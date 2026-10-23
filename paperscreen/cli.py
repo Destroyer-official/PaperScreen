@@ -54,6 +54,7 @@ def main(argv=None) -> int:
     p_br.add_argument("--duration", type=int, default=None, help="break length seconds")
     p_br.add_argument("--detached", action="store_true", help="run in background (toast reminders)")
     p_br.add_argument("--console", action="store_true", help="console output instead of toasts")
+    p_br.add_argument("--console-quiet", action="store_true", help=argparse.SUPPRESS)
 
     p_doc = sub.add_parser("doctor", help="diagnose APIs, DDC, HDR, matrix round-trip, restore")
     p_doc.add_argument("--repair", action="store_true", help="repair display state, restore unrestored backlight/smoothing, reset matrix to identity")
@@ -182,7 +183,8 @@ def main(argv=None) -> int:
                 file=sys.stderr if rc else sys.stdout,
             )
             return rc
-        return breaks.run(interval, duration, console=args.console)
+        console_mode = args.console and not getattr(args, "console_quiet", False)
+        return breaks.run(interval, duration, console=console_mode)
 
     if args.command == "autostart":
         return autostart(args.enable, args.disable)
@@ -241,9 +243,12 @@ def autostart(enable: bool, disable: bool) -> int:
             return 1
 
     # enable
-    pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
-    exe = pythonw if os.path.isfile(pythonw) else sys.executable
-    cmd = f'"{exe}" -m paperscreen.autostart_helper'
+    if getattr(sys, "frozen", False):
+        cmd = f'"{sys.executable}" on'
+    else:
+        pythonw = os.path.join(os.path.dirname(sys.executable), "pythonw.exe")
+        exe = pythonw if os.path.isfile(pythonw) else sys.executable
+        cmd = f'"{exe}" -m paperscreen.autostart_helper'
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY, 0, winreg.KEY_SET_VALUE) as k:
             winreg.SetValueEx(k, VALUE_NAME, 0, winreg.REG_SZ, cmd)

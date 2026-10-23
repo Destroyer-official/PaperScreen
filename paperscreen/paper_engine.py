@@ -106,14 +106,21 @@ def release(reason: str = "manual") -> dict:
         deadline = time.time() + MAX_DAEMON_WAIT
         while time.time() < deadline and spawn.is_daemon_running():
             time.sleep(0.1)
-        report["matrix"] = "daemon reverted and exited"
+        if spawn.is_daemon_running():
+            report["matrix"] = "daemon stop timed out"
+            report["status"] = "timeout"
+        else:
+            report["matrix"] = "daemon reverted and exited"
+            report["status"] = "stopped"
     else:
         # no daemon: make sure matrix is identity ourselves
         try:
             winlib.mag_set_color_effect(color_matrix.identity())
             report["matrix"] = "identity set directly"
+            report["status"] = "stopped"
         except winlib.PaperAPIError as exc:
             report["matrix"] = f"error: {exc}"
+            report["status"] = "error"
 
     if cfg.get("restore_backlight_on_exit", True):
         try:
@@ -128,7 +135,10 @@ def release(reason: str = "manual") -> dict:
     except winlib.PaperAPIError as exc:
         report["smoothing"] = f"error: {exc}"
 
-    signals.update(active=False, pid=None, status="stopped")
+    if report.get("status") != "timeout":
+        signals.update(active=False, pid=None, status="stopped")
+    else:
+        signals.update(status="timeout")
     return report
 
 

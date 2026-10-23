@@ -10,14 +10,9 @@ import os
 import subprocess
 import sys
 
-IS_WINDOWS = sys.platform == "win32"
+from . import winlib
 
-if IS_WINDOWS:
-    import ctypes
-    from ctypes import wintypes
-    kernel32 = ctypes.windll.kernel32
-else:
-    kernel32 = None
+IS_WINDOWS = sys.platform == "win32"
 
 
 def start_detached(module_args: list) -> int:
@@ -64,45 +59,45 @@ DAEMON_MUTEX_NAME = "Local\\PaperScreenDaemonSingleInstanceMutex"
 
 def is_daemon_running() -> bool:
     """Check if the PaperScreen daemon is actually running via the OS Named Mutex."""
-    if not IS_WINDOWS or kernel32 is None:
+    if not IS_WINDOWS:
         return False
-    from ctypes import wintypes
+    k32 = winlib.kernel32()
     SYNCHRONIZE = 0x00100000
-    kernel32.OpenMutexW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
-    kernel32.OpenMutexW.restype = wintypes.HANDLE
-    h = kernel32.OpenMutexW(SYNCHRONIZE, False, DAEMON_MUTEX_NAME)
+    h = k32.OpenMutexW(SYNCHRONIZE, False, DAEMON_MUTEX_NAME)
     if h:
-        kernel32.CloseHandle(h)
+        k32.CloseHandle(h)
         return True
     return False
 
 
 def is_alive(pid: int) -> bool:
-    if not IS_WINDOWS or kernel32 is None or not pid or pid <= 0:
+    if not IS_WINDOWS or not pid or pid <= 0:
         return False
+    import ctypes
     from ctypes import wintypes
+    k32 = winlib.kernel32()
     PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
     STILL_ACTIVE = 259
-    h = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    h = k32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
     if not h:
         return False
     try:
         code = wintypes.DWORD()
-        if kernel32.GetExitCodeProcess(h, ctypes.byref(code)):
+        if k32.GetExitCodeProcess(h, ctypes.byref(code)):
             if code.value != STILL_ACTIVE:
                 return False
             # Validate process executable to ensure unrelated PIDs are not misidentified
             buf = (wintypes.WCHAR * 1024)()
             size = wintypes.DWORD(1024)
-            if hasattr(kernel32, "QueryFullProcessImageNameW"):
-                if kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            if hasattr(k32, "QueryFullProcessImageNameW"):
+                if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
                     exe_name = buf.value.lower()
                     if not any(k in exe_name for k in ("python", "paperscreen")):
                         return False
             return True
         return False
     finally:
-        kernel32.CloseHandle(h)
+        k32.CloseHandle(h)
 
 
 __all__ = [

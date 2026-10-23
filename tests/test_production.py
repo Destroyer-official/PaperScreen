@@ -89,6 +89,39 @@ class ConfigValidationTests(unittest.TestCase):
         self.assertTrue(clean["auto_pause_fullscreen"])
         self.assertEqual(clean["excluded_apps"], ["photoshop.exe", "figma.exe"])
 
+    def test_boolean_config_string_and_type_coercion(self):
+        # Strings like "false", "0", "off" must evaluate to False (never truthy Python str)
+        clean_false = config._validate({
+            "invert_luminance": "false",
+            "breaks_enabled": "0",
+            "grayscale_smoothing": "off",
+            "hotkey_toggle": "no",
+        })
+        self.assertFalse(clean_false["invert_luminance"])
+        self.assertFalse(clean_false["breaks_enabled"])
+        self.assertFalse(clean_false["grayscale_smoothing"])
+        self.assertFalse(clean_false["hotkey_toggle"])
+
+        # Strings like "true", "1", "yes", "on" must evaluate to True
+        clean_true = config._validate({
+            "invert_luminance": "true",
+            "breaks_enabled": "1",
+            "grayscale_smoothing": "on",
+            "hotkey_toggle": "yes",
+        })
+        self.assertTrue(clean_true["invert_luminance"])
+        self.assertTrue(clean_true["breaks_enabled"])
+        self.assertTrue(clean_true["grayscale_smoothing"])
+        self.assertTrue(clean_true["hotkey_toggle"])
+
+        # Invalid string/None falls back to default
+        clean_fallback = config._validate({
+            "invert_luminance": "invalid_string",
+            "breaks_enabled": None,
+        })
+        self.assertEqual(clean_fallback["invert_luminance"], config.DEFAULTS["invert_luminance"])
+        self.assertEqual(clean_fallback["breaks_enabled"], config.DEFAULTS["breaks_enabled"])
+
     def test_solar_circadian_validation(self):
         clean = config._validate({
             "solar_circadian": True,
@@ -122,6 +155,15 @@ class CircadianTests(unittest.TestCase):
         self.assertIsNotNone(times["sunset"])
         self.assertGreater(times["day_length_hours"], 8.0)
         self.assertLess(times["day_length_hours"], 16.0)
+
+    def test_leap_year_solar_calculation(self):
+        from paperscreen import circadian
+        # In leap year 2028 (Feb 29)
+        leap_date = datetime.date(2028, 2, 29)
+        times = circadian.calculate_solar_times(40.71, -74.01, date=leap_date, utc_offset_hours=-5.0)
+        self.assertIsNotNone(times["sunrise"])
+        self.assertIsNotNone(times["sunset"])
+        self.assertFalse(times["polar_night"])
 
     def test_solar_is_night_logic(self):
         from paperscreen import circadian
