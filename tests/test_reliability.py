@@ -139,6 +139,72 @@ class TransactionalBacklightTests(unittest.TestCase):
             self.assertTrue(any(s["name"] == "Internal Display #1" for s in report["set"]))
             mock_wmi_set.assert_called_with(40)
 
+    def test_monitor_topology_shift_restoration(self):
+        """When monitor was saved as #2 but reconnects as #1, restore matches and restores it."""
+        signals.update(
+            backlight_previous={
+                "LG UltraFine #2": {"original": 65, "status": "active"},
+            },
+            backlight_level=30,
+        )
+        # Reconnected as monitor index 0 (so key is LG UltraFine #1)
+        mock_monitors = [(102, "LG UltraFine")]
+        calls = []
+
+        def fake_ddc_set(handle, level):
+            calls.append((handle, level))
+            return True
+
+        with patch("paperscreen.winlib.open_physical_monitors") as mock_open, \
+             patch("paperscreen.winlib.ddc_get_brightness", return_value=30), \
+             patch("paperscreen.winlib.ddc_set_brightness", side_effect=fake_ddc_set):
+
+            mock_open.return_value.__enter__.return_value = mock_monitors
+            mock_open.return_value.__exit__.return_value = None
+
+            report = backlight.restore()
+            self.assertEqual(len(report["restored"]), 1)
+            self.assertEqual(report["restored"][0]["name"], "LG UltraFine #2")
+            self.assertEqual(report["restored"][0]["to"], 65)
+            self.assertEqual(calls, [(102, 65)])
+
+            # Verify journal entry was cleared
+            j = signals.load()
+            self.assertNotIn("LG UltraFine #2", j.get("backlight_previous", {}))
+
+    def test_monitor_hardware_device_id_restoration(self):
+        """Restore matches by unique hardware device_id even if name or enumeration index shifted."""
+        signals.update(
+            backlight_previous={
+                "Old Setup #1": {
+                    "original": 75,
+                    "status": "active",
+                    "device_id": "MONITOR\\SAM0D1A\\0002",
+                },
+            },
+            backlight_level=30,
+        )
+        # Reconnected with new compound name "Generic PnP Monitor #1" but matching device_id
+        monitor_with_id = winlib.PhysicalMonitorHandle(103, "Generic PnP Monitor", "MONITOR\\SAM0D1A\\0002")
+        calls = []
+
+        def fake_ddc_set(handle, level):
+            calls.append((handle, level))
+            return True
+
+        with patch("paperscreen.winlib.open_physical_monitors") as mock_open, \
+             patch("paperscreen.winlib.ddc_get_brightness", return_value=30), \
+             patch("paperscreen.winlib.ddc_set_brightness", side_effect=fake_ddc_set):
+
+            mock_open.return_value.__enter__.return_value = [monitor_with_id]
+            mock_open.return_value.__exit__.return_value = None
+
+            report = backlight.restore()
+            self.assertEqual(len(report["restored"]), 1)
+            self.assertEqual(report["restored"][0]["name"], "Old Setup #1")
+            self.assertEqual(report["restored"][0]["to"], 75)
+            self.assertEqual(calls, [(103, 75)])
+
 
 class BrightnessNormalizationTests(unittest.TestCase):
     def test_ddc_set_brightness_maps_non_standard_ranges(self):

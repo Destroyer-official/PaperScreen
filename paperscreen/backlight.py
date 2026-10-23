@@ -140,7 +140,9 @@ def set_brightness(level: int, remember: bool = True, rollback_on_failure: bool 
 
         try:
             with winlib.open_physical_monitors() as opened:
-                for i, (handle, name) in enumerate(opened):
+                for i, item in enumerate(opened):
+                    handle, name = item[0], item[1]
+                    dev_id = getattr(item, "device_id", "")
                     key = f"{name} #{i+1}"
                     prev = winlib.ddc_get_brightness(handle)
                     time.sleep(0.05)  # I2C recovery window between read and write
@@ -150,13 +152,25 @@ def set_brightness(level: int, remember: bool = True, rollback_on_failure: bool 
                     if prev == level:
                         report["skipped"].append({"name": key, "reason": "already_at_level", "brightness": level})
                         if remember and key not in previous_by_key:
-                            previous_by_key[key] = {"original": prev, "status": "active", "set_level": level}
+                            previous_by_key[key] = {
+                                "original": prev,
+                                "status": "active",
+                                "set_level": level,
+                                "device_id": dev_id,
+                                "name": name,
+                            }
                         continue
                     if winlib.ddc_set_brightness(handle, level):
                         time.sleep(0.15)  # DDC write settling time for monitor microcontroller
                         report["set"].append({"name": key, "from": prev, "to": level, "method": "ddc"})
                         if remember and key not in previous_by_key:
-                            previous_by_key[key] = {"original": prev, "status": "active", "set_level": level}
+                            previous_by_key[key] = {
+                                "original": prev,
+                                "status": "active",
+                                "set_level": level,
+                                "device_id": dev_id,
+                                "name": name,
+                            }
                     else:
                         report["failed"].append({"name": key, "reason": "SetMonitorBrightness failed"})
                         if rollback_on_failure:
@@ -218,28 +232,48 @@ def restore() -> dict:
 
     try:
         with winlib.open_physical_monitors() as opened:
-            for i, (handle, name) in enumerate(opened):
+            for i, item in enumerate(opened):
+                handle, name = item[0], item[1]
+                dev_id = getattr(item, "device_id", "")
                 key = f"{name} #{i+1}"
+
+                # 1. Exact compound key match (e.g. "Dell U2720Q #1")
                 entry = previous_by_key.get(key)
+                matched_key = key
+
+                # 2. Match by hardware device_id if enumeration order or port shifted
+                if entry is None and dev_id:
+                    for k, v in list(previous_by_key.items()):
+                        if isinstance(v, dict) and v.get("device_id") == dev_id and k not in restored_keys:
+                            entry = v
+                            matched_key = k
+                            break
+
+                # 3. Match by model name or topology-shifted key (e.g. was #2, now enumerated as #1)
                 if entry is None:
-                    # Also fallback to matching bare name for backwards compatibility
-                    entry = previous_by_key.get(name)
-                    if entry is not None:
-                        key = name
+                    if name in previous_by_key and name not in restored_keys:
+                        entry = previous_by_key[name]
+                        matched_key = name
+                    else:
+                        for k, v in list(previous_by_key.items()):
+                            if (k.startswith(f"{name} #") or k == name) and k not in restored_keys:
+                                entry = v
+                                matched_key = k
+                                break
 
                 prev_val = _extract_original(entry)
                 if prev_val is not None:
                     cur = winlib.ddc_get_brightness(handle)
                     if cur == prev_val:
-                        report["restored"].append({"name": key, "to": prev_val, "method": "ddc", "skipped": "already_at_level"})
-                        restored_keys.add(key)
+                        report["restored"].append({"name": matched_key, "to": prev_val, "method": "ddc", "skipped": "already_at_level"})
+                        restored_keys.add(matched_key)
                         continue
                     if winlib.ddc_set_brightness(handle, prev_val):
                         time.sleep(0.15)  # DDC write settling time
-                        report["restored"].append({"name": key, "to": prev_val, "method": "ddc"})
-                        restored_keys.add(key)
+                        report["restored"].append({"name": matched_key, "to": prev_val, "method": "ddc"})
+                        restored_keys.add(matched_key)
                     else:
-                        report["failed"].append({"name": key, "reason": "DDC set failed"})
+                        report["failed"].append({"name": matched_key, "reason": "DDC set failed"})
     except PaperAPIError as exc:
         logger.warn(f"DDC restore error: {exc}")
 

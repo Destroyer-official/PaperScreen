@@ -63,6 +63,30 @@ class MONITORINFOEXW(ctypes.Structure):
     ]
 
 
+class PhysicalMonitorHandle(tuple):
+    """Tuple subclass (handle, description) with optional .device_id attribute for stable identity."""
+
+    _device_id: str
+
+    def __new__(cls, handle: int, description: str, device_id: str = ""):
+        return super().__new__(cls, (handle, description))
+
+    def __init__(self, handle: int, description: str, device_id: str = ""):
+        self._device_id = str(device_id or "")
+
+    @property
+    def handle(self) -> int:
+        return self[0]
+
+    @property
+    def description(self) -> str:
+        return self[1]
+
+    @property
+    def device_id(self) -> str:
+        return self._device_id
+
+
 # ---------------------------------------------------------------------------
 # DLL loading (lazy so import on non-Windows doesn't explode)
 # ---------------------------------------------------------------------------
@@ -295,15 +319,34 @@ def enum_monitor_handles() -> List[Tuple[wintypes.HMONITOR, wintypes.HDC, wintyp
     return result
 
 
-def get_physical_monitors() -> List[Tuple[int, str]]:
-    """Open physical monitors via DDC. Returns [(handle, description)].
+def get_physical_monitors() -> List[PhysicalMonitorHandle]:
+    """Open physical monitors via DDC. Returns [PhysicalMonitorHandle(handle, description, device_id)].
 
     Handles must be released via destroy_physical_monitors().
     Guarantees that already-opened handles are destroyed if enumeration fails.
     """
-    out: List[Tuple[int, str]] = []
+    out: List[PhysicalMonitorHandle] = []
     try:
+        u32 = user32()
         for hmon, _hdc, _rect in enum_monitor_handles():
+            device_id = ""
+            try:
+                mi = MONITORINFOEXW()
+                mi.cbSize = ctypes.sizeof(mi)
+                u32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(MONITORINFOEXW)]
+                u32.GetMonitorInfoW.restype = wintypes.BOOL
+                if u32.GetMonitorInfoW(hmon, ctypes.byref(mi)):
+                    dd = DISPLAY_DEVICEW()
+                    dd.cb = ctypes.sizeof(dd)
+                    u32.EnumDisplayDevicesW.argtypes = [
+                        wintypes.LPCWSTR, wintypes.DWORD, ctypes.POINTER(DISPLAY_DEVICEW), wintypes.DWORD
+                    ]
+                    u32.EnumDisplayDevicesW.restype = wintypes.BOOL
+                    if u32.EnumDisplayDevicesW(mi.szDevice, 0, ctypes.byref(dd), 0):
+                        device_id = str(dd.DeviceID or "")
+            except Exception:
+                device_id = ""
+
             count = wintypes.DWORD()
             dll = dxva2()
             dll.GetNumberOfPhysicalMonitorsFromHMONITOR.restype = wintypes.BOOL
@@ -322,7 +365,8 @@ def get_physical_monitors() -> List[Tuple[int, str]]:
             if not dll.GetPhysicalMonitorsFromHMONITOR(hmon, count.value, arr):
                 continue
             for i in range(count.value):
-                out.append((arr[i].hPhysicalMonitor, arr[i].szPhysicalMonitorDescription or "?"))
+                desc = arr[i].szPhysicalMonitorDescription or "?"
+                out.append(PhysicalMonitorHandle(arr[i].hPhysicalMonitor, desc, device_id))
         return out
     except Exception:
         if out:
