@@ -124,6 +124,21 @@ class TransactionalBacklightTests(unittest.TestCase):
             mock_restore.assert_not_called()
             self.assertIn("skipped", report["backlight"])
 
+    @patch("paperscreen.backlight._wmi_get_brightness", return_value=50)
+    @patch("paperscreen.backlight._wmi_set_brightness", return_value=True)
+    def test_wmi_runs_independently_when_ddc_fails(self, mock_wmi_set, mock_wmi_get):
+        """A failing external DDC monitor must not prevent the internal laptop panel from being adjusted."""
+        mock_monitors = [(101, "External Bad DDC")]
+        with patch("paperscreen.winlib.open_physical_monitors") as mock_open, \
+             patch("paperscreen.winlib.ddc_get_brightness", return_value=None):
+            mock_open.return_value.__enter__.return_value = mock_monitors
+            mock_open.return_value.__exit__.return_value = None
+
+            report = backlight.set_brightness(40, remember=True, rollback_on_failure=False)
+            self.assertTrue(any(f["name"] == "External Bad DDC #1" for f in report["failed"]))
+            self.assertTrue(any(s["name"] == "Internal Display #1" for s in report["set"]))
+            mock_wmi_set.assert_called_with(40)
+
 
 class BrightnessNormalizationTests(unittest.TestCase):
     def test_ddc_set_brightness_maps_non_standard_ranges(self):

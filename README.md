@@ -135,7 +135,7 @@ PaperScreen includes an automated test suite verifying matrix mathematics, circa
 pytest -v
 ```
 
-*83 automated tests, 100% pass rate.*
+*84 automated tests, 100% pass rate.*
 
 ---
 

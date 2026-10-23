@@ -100,17 +100,16 @@ def list_monitors() -> List[dict]:
     except PaperAPIError as exc:
         logger.warn(f"Failed to enumerate DDC monitors: {exc}")
 
-    # If no DDC monitors found, check for internal laptop display
-    if not out:
-        wmi_val = _wmi_get_brightness()
-        if wmi_val is not None:
-            out.append({
-                "id": "Internal Display #1",
-                "name": "Internal Laptop Display",
-                "brightness": wmi_val,
-                "ddc": False,
-                "method": "wmi",
-            })
+    # Check for internal laptop display independently
+    wmi_val = _wmi_get_brightness()
+    if wmi_val is not None:
+        out.append({
+            "id": "Internal Display #1",
+            "name": "Internal Laptop Display",
+            "brightness": wmi_val,
+            "ddc": False,
+            "method": "wmi",
+        })
 
     return out
 
@@ -182,17 +181,20 @@ def set_brightness(level: int, remember: bool = True, rollback_on_failure: bool 
         report["set"] = []
         return report
 
-    # WMI fallback if no DDC monitors were set
-    if not report["set"] and not report["failed"]:
-        wmi_prev = _wmi_get_brightness()
-        if wmi_prev is not None:
-            wmi_key = "Internal Display #1"
-            if _wmi_set_brightness(level):
-                report["set"].append({"name": wmi_key, "from": wmi_prev, "to": level, "method": "wmi"})
-                if remember and wmi_key not in previous_by_key:
-                    previous_by_key[wmi_key] = {"original": wmi_prev, "status": "active", "set_level": level}
-            else:
-                report["failed"].append({"name": wmi_key, "reason": "WMI set brightness failed"})
+    # Independent WMI internal laptop panel adjustment
+    wmi_prev = _wmi_get_brightness()
+    if wmi_prev is not None:
+        wmi_key = "Internal Display #1"
+        if wmi_prev == level:
+            report["skipped"].append({"name": wmi_key, "reason": "already_at_level", "brightness": level})
+            if remember and wmi_key not in previous_by_key:
+                previous_by_key[wmi_key] = {"original": wmi_prev, "status": "active", "set_level": level}
+        elif _wmi_set_brightness(level):
+            report["set"].append({"name": wmi_key, "from": wmi_prev, "to": level, "method": "wmi"})
+            if remember and wmi_key not in previous_by_key:
+                previous_by_key[wmi_key] = {"original": wmi_prev, "status": "active", "set_level": level}
+        else:
+            report["failed"].append({"name": wmi_key, "reason": "WMI set brightness failed"})
 
     if remember and report["set"]:
         signals.update(backlight_previous=previous_by_key, backlight_level=level)
